@@ -202,7 +202,7 @@ class Calibrator(object):
     """
     Base class for calibration system
     """
-    def __init__(self, boards, flags=0, pattern=Patterns.Chessboard, name='', checkerboard_flags=cv2.CALIB_CB_FAST_CHECK):
+    def __init__(self, boards, flags=0, pattern=Patterns.Chessboard, name='', checkerboard_flags=cv2.CALIB_CB_FAST_CHECK, min_img_size=(640, 480), camera_info=None):
         # Ordering the dimensions for the different detectors is actually a minefield...
         if pattern == Patterns.Chessboard:
             # Make sure n_cols > n_rows to agree with OpenCV CB detector output
@@ -231,6 +231,13 @@ class Calibrator(object):
         self.goodenough = False
         self.param_ranges = [0.7, 0.7, 0.4, 0.5]
         self.name = name
+        self.min_img_size = min_img_size
+        self.camera_info = camera_info
+
+        self.size = None
+        if self.camera_info is not None:       
+            self.size = (self.camera_info.height, self.camera_info.width)
+
 
     def mkgray(self, msg):
         """
@@ -362,8 +369,8 @@ class Calibrator(object):
         # Scale the input image down to ~VGA size
         height = img.shape[0]
         width = img.shape[1]
-        scale = math.sqrt( (width*height) / (640.*480.) )
-        if scale > 1.0:
+        scale = math.sqrt( (width*height) / float(self.min_img_size[0]* self.min_img_size[1]) )
+        if scale  != 1.0:
             scrib = cv2.resize(img, (int(width / scale), int(height / scale)))
         else:
             scrib = img
@@ -791,9 +798,23 @@ class StereoCalibrator(Calibrator):
     def __init__(self, *args, **kwargs):
         if 'name' not in kwargs:
             kwargs['name'] = 'narrow_stereo'
-        super(StereoCalibrator, self).__init__(*args, **kwargs)
-        self.l = MonoCalibrator(*args, **kwargs)
-        self.r = MonoCalibrator(*args, **kwargs)
+        
+        # one camera info per calibrator
+        lkwargs = kwargs.copy()
+        rkwargs = kwargs.copy()
+        if 'camera_info' in kwargs:
+            tmp = kwargs.get('camera_info')
+            del kwargs['camera_info']
+            del lkwargs['camera_info']
+            del rkwargs['camera_info']
+            lkwargs['camera_info'] = tmp[0]
+            rkwargs['camera_info'] = tmp[1]
+
+        super(StereoCalibrator, self).__init__(*args, **lkwargs)
+        self.l = MonoCalibrator(*args, **lkwargs)
+        self.r = MonoCalibrator(*args, **rkwargs)
+        print "L: ", self.l.size
+        print "R: ", self.r.size
         # Collecting from two cameras in a horizontal stereo rig, can't get
         # full X range in the left camera.
         self.param_ranges[0] = 0.4
@@ -810,7 +831,7 @@ class StereoCalibrator(Calibrator):
         goodcorners = self.collect_corners(limages, rimages)
         self.size = (limages[0].shape[1], limages[0].shape[0])
         self.l.size = self.size
-        self.r.size = self.size
+        self.r.size = (rimages[0].shape[1], rimages[0].shape[0])
         self.cal_fromcorners(goodcorners)
         self.calibrated = True
 
@@ -979,8 +1000,8 @@ class StereoCalibrator(Calibrator):
         epierror = -1
 
         # Get display-images-to-be and detections of the calibration target
-        lscrib_mono, lcorners, ldownsampled_corners, lboard, (x_scale, y_scale) = self.downsample_and_detect(lgray)
-        rscrib_mono, rcorners, rdownsampled_corners, rboard, _ = self.downsample_and_detect(rgray)
+        lscrib_mono, lcorners, ldownsampled_corners, lboard, (lx_scale, ly_scale) = self.downsample_and_detect(lgray)
+        rscrib_mono, rcorners, rdownsampled_corners, rboard, (rx_scale, ry_scale) = self.downsample_and_detect(rgray)
 
         if self.calibrated:
             # Show rectified images
@@ -988,8 +1009,9 @@ class StereoCalibrator(Calibrator):
             rremap = self.r.remap(rgray)
             lrect = lremap
             rrect = rremap
-            if x_scale != 1.0 or y_scale != 1.0:
+            if lx_scale != 1.0 or ly_scale != 1.0:
                 lrect = cv2.resize(lremap, (lscrib_mono.shape[1], lscrib_mono.shape[0]))
+            if rx_scale != 1.0 or ry_scale != 1.0:
                 rrect = cv2.resize(rremap, (rscrib_mono.shape[1], rscrib_mono.shape[0]))
 
             lscrib = cv2.cvtColor(lrect, cv2.COLOR_GRAY2BGR)
@@ -999,15 +1021,15 @@ class StereoCalibrator(Calibrator):
             if lcorners is not None:
                 lundistorted = self.l.undistort_points(lcorners)
                 scrib_src = lundistorted.copy()
-                scrib_src[:,:,0] /= x_scale
-                scrib_src[:,:,1] /= y_scale
+                scrib_src[:,:,0] /= lx_scale
+                scrib_src[:,:,1] /= ly_scale
                 cv2.drawChessboardCorners(lscrib, (lboard.n_cols, lboard.n_rows), scrib_src, True)
 
             if rcorners is not None:
                 rundistorted = self.r.undistort_points(rcorners)
                 scrib_src = rundistorted.copy()
-                scrib_src[:,:,0] /= x_scale
-                scrib_src[:,:,1] /= y_scale
+                scrib_src[:,:,0] /= rx_scale
+                scrib_src[:,:,1] /= ry_scale
                 cv2.drawChessboardCorners(rscrib, (rboard.n_cols, rboard.n_rows), scrib_src, True)
 
             # Report epipolar error
@@ -1041,6 +1063,7 @@ class StereoCalibrator(Calibrator):
         return rv
 
     def do_calibration(self, dump = False):
+        print "DO CALIGRATION"
         # TODO MonoCalibrator collects corners if needed here
         # Dump should only occur if user wants it
         if dump:

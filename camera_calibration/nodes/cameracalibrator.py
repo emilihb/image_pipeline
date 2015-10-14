@@ -51,6 +51,7 @@ from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, Ches
 from std_msgs.msg import String
 from std_srvs.srv import Empty
 
+
 class DisplayThread(threading.Thread):
     """
     Thread that displays the current images
@@ -94,8 +95,9 @@ class ConsumerThread(threading.Thread):
 
 
 class CalibrationNode:
-    def __init__(self, boards, service_check = True, synchronizer = message_filters.TimeSynchronizer, flags = 0,
-                 pattern=Patterns.Chessboard, camera_name='', checkerboard_flags = 0):
+    def __init__(self, boards, service_check=True, synchronizer=message_filters.TimeSynchronizer, flags=0,
+                 pattern=Patterns.Chessboard, camera_name='', checkerboard_flags=0,
+                 min_img_size=(640, 480)):
         if service_check:
             # assume any non-default service names have been set.  Wait for the service to become ready
             for svcname in ["camera", "left_camera", "right_camera"]:
@@ -115,6 +117,7 @@ class CalibrationNode:
         self._checkerboard_flags = checkerboard_flags
         self._pattern = pattern
         self._camera_name = camera_name
+        self._min_img_size = min_img_size
         lsub = message_filters.Subscriber('left', sensor_msgs.msg.Image)
         rsub = message_filters.Subscriber('right', sensor_msgs.msg.Image)
         ts = synchronizer([lsub, rsub], 4)
@@ -129,6 +132,8 @@ class CalibrationNode:
                                                                sensor_msgs.srv.SetCameraInfo)
         self.set_right_camera_info_service = rospy.ServiceProxy("%s/set_camera_info" % rospy.remap_name("right_camera"),
                                                                 sensor_msgs.srv.SetCameraInfo)
+        self.linfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("left_camera"), sensor_msgs.msg.CameraInfo, self.lcamera_info)
+        self.rinfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("right_camera"), sensor_msgs.msg.CameraInfo, self.rcamera_info)
 
         self.q_mono = deque([], 1)
         self.q_stereo = deque([], 1)
@@ -154,6 +159,14 @@ class CalibrationNode:
     def queue_stereo(self, lmsg, rmsg):
         self.q_stereo.append((lmsg, rmsg))
 
+    def lcamera_info(self, msg):
+        self._left_camera_info = msg
+        self.linfo_sub.unregister()
+
+    def rcamera_info(self, msg):
+        self._right_camera_info = msg
+        self.rinfo_sub.unregister()
+
     def handle_monocular(self, msg):
         if self.c == None:
             if self._camera_name:
@@ -171,11 +184,22 @@ class CalibrationNode:
     def handle_stereo(self, msg):
         if self.c == None:
             if self._camera_name:
-                self.c = StereoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
-                                          checkerboard_flags=self._checkerboard_flags)
+                self.c = StereoCalibrator(
+                    self._boards,
+                    self._calib_flags,
+                    self._pattern,
+                    name=self._camera_name,
+                    checkerboard_flags=self._checkerboard_flags,
+                    min_img_size=self._min_img_size,
+                    camera_info=(self._left_camera_info, self._right_camera_info))
             else:
-                self.c = StereoCalibrator(self._boards, self._calib_flags, self._pattern,
-                                          checkerboard_flags=self._checkerboard_flags)
+                self.c = StereoCalibrator(
+                    self._boards,
+                    self._calib_flags,
+                    self._pattern,
+                    checkerboard_flags=self._checkerboard_flags,
+                    min_img_size=self._min_img_size,
+                    camera_info=(self._left_camera_info, self._right_camera_info))
 
         drawable = self.c.handle_msg(msg)
         self.displaywidth = drawable.lscrib.shape[1] + drawable.rscrib.shape[1]
@@ -327,8 +351,8 @@ class OpenCVCalibrationNode(CalibrationNode):
         width = lwidth + rwidth
         display = numpy.zeros((max(480, height), lwidth+rwidth + 100, 3), dtype=numpy.uint8)
         display[0:lheight, 0:lwidth, :] = drawable.lscrib
-        display[0:rheight, lwidth:lwidth+rwidth, :] = drawable.rscrib
-        display[0:height, lwidth+rwidth:lwidth+rwidth+100, :].fill(255)
+        display[0:rheight, lwidth:width, :] = drawable.rscrib
+        display[0:height, width:width+100, :].fill(255)
 
         self.buttons(display)
 
@@ -336,26 +360,26 @@ class OpenCVCalibrationNode(CalibrationNode):
             if drawable.params:
                 for i, (label, lo, hi, progress) in enumerate(drawable.params):
                     (w,_) = self.getTextSize(label)
-                    self.putText(display, label, (2 * width + (100 - w) / 2, self.y(i)))
+                    self.putText(display, label, (width + (100 - w) / 2, self.y(i)))
                     color = (0, 255,0)
                     if progress < 1.0:
                         color = (0, int(progress*255.), 255)
                     cv2.line(display,
-                            (int(2 * width + lo * 100), self.y(i) + 20),
-                            (int(2 * width + hi * 100), self.y(i) + 20),
+                            (int(width + lo * 100), self.y(i) + 20),
+                            (int(width + hi * 100), self.y(i) + 20),
                             color, 4)
 
         else:
-            self.putText(display, "epi.", (2 * width, self.y(0)))
+            self.putText(display, "epi.", (width, self.y(0)))
             if drawable.epierror == -1:
                 msg = "?"
             else:
                 msg = "%.2f" % drawable.epierror
-            self.putText(display, msg, (2 * width, self.y(1)))
+            self.putText(display, msg, (width, self.y(1)))
             # TODO dim is never set anywhere. Supposed to be observed chessboard size?
             if drawable.dim != -1:
-                self.putText(display, "dim", (2 * width, self.y(2)))
-                self.putText(display, "%.3f" % drawable.dim, (2 * width, self.y(3)))
+                self.putText(display, "dim", (width, self.y(2)))
+                self.putText(display, "%.3f" % drawable.dim, (width, self.y(3)))
 
         self.queue_display.append(display)
 
@@ -378,7 +402,14 @@ def main():
     group.add_option("-q", "--square",
                      action="append", default=[],
                      help="chessboard square size in meters")
+    group.add_option("--img-size",         
+                    type="string", default="640x480",
+                    help="minimum image size as NxM for calibartion (default 640x480)")
+    group.add_option("--extrinsics-only",
+                    action="store_true", default=False,
+                     help="force stereo extrinsics calibration only. Intrinsics for both cameras must be provided")
     parser.add_option_group(group)
+
     group = OptionGroup(parser, "ROS Communication Options")
     group.add_option("--approximate",
                      type="float", default=0.0,
@@ -403,11 +434,14 @@ def main():
     group.add_option("--disable_calib_cb_fast_check", action='store_true', default=False,
                      help="uses the CALIB_CB_FAST_CHECK flag for findChessboardCorners")
     parser.add_option_group(group)
+
     options, args = parser.parse_args()
 
     if len(options.size) != len(options.square):
         parser.error("Number of size and square inputs must be the same!")
-    
+
+    img_size = tuple([int(c) for c in options.img_size.split('x')])
+
     if not options.square:
         options.square.append("0.108")
         options.size.append("8x6")
@@ -461,7 +495,7 @@ def main():
 
     rospy.init_node('cameracalibrator')
     node = OpenCVCalibrationNode(boards, options.service_check, sync, calib_flags, pattern, options.camera_name,
-                                 checkerboard_flags=checkerboard_flags)
+                                 checkerboard_flags=checkerboard_flags, min_img_size=img_size)
     rospy.spin()
 
 if __name__ == "__main__":
