@@ -317,13 +317,18 @@ class OpenCVCalibrationNode(CalibrationNode):
         self.queue_display.append(display)
 
     def redraw_stereo(self, drawable):
-        height = drawable.lscrib.shape[0]
-        width = drawable.lscrib.shape[1]
+        lheight = drawable.lscrib.shape[0]
+        lwidth = drawable.lscrib.shape[1]
 
-        display = numpy.zeros((max(480, height), 2 * width + 100, 3), dtype=numpy.uint8)
-        display[0:height, 0:width,:] = drawable.lscrib
-        display[0:height, width:2*width,:] = drawable.rscrib
-        display[0:height, 2*width:2*width+100,:].fill(255)
+        rheight = drawable.rscrib.shape[0]
+        rwidth = drawable.rscrib.shape[1]
+
+        height = max(lheight, rheight)
+        width = lwidth + rwidth
+        display = numpy.zeros((max(480, height), lwidth+rwidth + 100, 3), dtype=numpy.uint8)
+        display[0:lheight, 0:lwidth, :] = drawable.lscrib
+        display[0:rheight, lwidth:lwidth+rwidth, :] = drawable.rscrib
+        display[0:height, lwidth+rwidth:lwidth+rwidth+100, :].fill(255)
 
         self.buttons(display)
 
@@ -332,7 +337,7 @@ class OpenCVCalibrationNode(CalibrationNode):
                 for i, (label, lo, hi, progress) in enumerate(drawable.params):
                     (w,_) = self.getTextSize(label)
                     self.putText(display, label, (2 * width + (100 - w) / 2, self.y(i)))
-                    color = (0,255,0)
+                    color = (0, 255,0)
                     if progress < 1.0:
                         color = (0, int(progress*255.), 255)
                     cv2.line(display,
