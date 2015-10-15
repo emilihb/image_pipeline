@@ -40,10 +40,25 @@ import cv2
 import cv_bridge
 import tarfile
 
-from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, CalibrationException, ChessboardInfo
+from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, CalibrationException, ChessboardInfo, Patterns
 
 import rospy
 import sensor_msgs.srv
+import sensor_msgs.msg
+import yaml
+
+def parse_yaml(filename):
+    stream = file(filename, 'r')
+    calib_data = yaml.load(stream)
+    cam_info = sensor_msgs.msg.CameraInfo()
+    cam_info.width = calib_data['image_width']
+    cam_info.height = calib_data['image_height']
+    cam_info.K = calib_data['camera_matrix']['data']
+    cam_info.D = calib_data['distortion_coefficients']['data']
+    cam_info.R = calib_data['rectification_matrix']['data']
+    cam_info.P = calib_data['projection_matrix']['data']
+    cam_info.distortion_model = calib_data['distortion_model']
+    return cam_info
 
 def waitkey():
     k = cv2.waitKey(6)
@@ -60,11 +75,11 @@ def display(win_name, img):
         rospy.signal_shutdown('Quit')
 
 
-def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags = 0, visualize = False, alpha=1.0):
+def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags = 0, visualize = False, alpha=1.0, pattern=Patterns.Chessboard, camera_info=None):
     if mono:
-        calibrator = MonoCalibrator(boards, calib_flags)
+        calibrator = MonoCalibrator(boards, calib_flags, pattern=pattern)
     else:
-        calibrator = StereoCalibrator(boards, calib_flags)
+        calibrator = StereoCalibrator(boards, calib_flags, pattern=pattern, camera_info=camera_info)
 
     calibrator.do_tarfile_calibration(tarname)
 
@@ -147,10 +162,12 @@ def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags 
 
                     drawable=calibrator.handle_msg([ msg_left,msg_right] )
 
-                    h, w = numpy.asarray(drawable.lscrib[:,:]).shape[:2]
-                    vis = numpy.zeros((h, w*2, 3), numpy.uint8)
-                    vis[:h, :w ,:] = numpy.asarray(drawable.lscrib[:,:])
-                    vis[:h, w:w*2, :] = numpy.asarray(drawable.rscrib[:,:])
+                    hl, wl = numpy.asarray(drawable.lscrib[:,:]).shape[:2]
+                    hr, wr = numpy.asarray(drawable.rscrib[:,:]).shape[:2]
+                    h, w = (max(hl, hr), wl+wr)
+                    vis = numpy.zeros((h, w, 3), numpy.uint8)
+                    vis[0:hl, 0:wl ,:] = numpy.asarray(drawable.lscrib[:,:])
+                    vis[:hr, wl:w, :] = numpy.asarray(drawable.rscrib[:,:])
                     
                     display(l+" "+r,vis)    
 
@@ -178,6 +195,19 @@ if __name__ == '__main__':
                      help="visualize rectified images after calibration")
     parser.add_option("-a", "--alpha", type="float", default=1.0, metavar="ALPHA",
                      help="zoom for visualization of rectifies images. Ranges from 0 (zoomed in, all pixels in calibrated image are valid) to 1 (zoomed out, all pixels in  original image are in calibrated image). default %default)")
+    parser.add_option("-p", "--pattern",
+                     type="string", default="chessboard",
+                     help="calibration pattern to detect - 'chessboard', 'circles', 'acircles'")
+
+    parser.add_option("--extrinsics-only",
+                     action="store_true", default=False,
+                     help="left camera intrinsics file")
+    parser.add_option("--lintrinsics",
+                     type="string", default=None,
+                     help="left camera intrinsics file")
+    parser.add_option("--rintrinsics",
+                     type="string", default=None,
+                     help="left camera intrinsics file")
 
     options, args = parser.parse_args()
     
@@ -187,6 +217,24 @@ if __name__ == '__main__':
     if not options.square:
         options.square.append("0.108")
         options.size.append("8x6")
+
+    pattern = Patterns.Chessboard
+    if options.pattern == 'circles':
+        pattern = Patterns.Circles
+    elif options.pattern == 'acircles':
+        pattern = Patterns.ACircles
+    elif options.pattern != 'chessboard':
+        print('Unrecognized pattern %s, defaulting to chessboard' % options.pattern)
+
+    linfo = None
+    rinfo = None
+    if options.extrinsics_only is True:
+        try:
+            linfo = parse_yaml(options.lintrinsics)
+            rinfo = parse_yaml(options.rintrinsics)
+        except Exception, e:
+            import traceback
+            traceback.print_exc()
 
     boards = []
     for (sz, sq) in zip(options.size, options.square):
@@ -232,4 +280,4 @@ if __name__ == '__main__':
     if (num_ks < 1):
         calib_flags |= cv2.CALIB_FIX_K1
 
-    cal_from_tarfile(boards, tarname, options.mono, options.upload, calib_flags, options.visualize, options.alpha)
+    cal_from_tarfile(boards, tarname, options.mono, options.upload, calib_flags, options.visualize, options.alpha, pattern, camera_info=(linfo, rinfo))
