@@ -186,7 +186,21 @@ def _get_circles(img, board, pattern):
     if pattern == Patterns.ACircles:
         flag = cv2.CALIB_CB_ASYMMETRIC_GRID
     mono_arr = numpy.array(mono)
-    (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_cols, board.n_rows), flags=flag)
+
+    params = cv2.SimpleBlobDetector_Params()
+   
+    # # # Filter by Area.
+    params.filterByArea = True
+    params.minArea = 10
+    params.maxArea = 10e4;
+    # Filter by Inertia
+    params.filterByInertia = True
+    params.minInertiaRatio = 0.01
+
+    bd = cv2.SimpleBlobDetector(params)
+
+
+    (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_cols, board.n_rows), flags=flag, blobDetector=bd)
 
     # In symmetric case, findCirclesGrid does not detect the target if it's turned sideways. So we try
     # again with dimensions swapped - not so efficient.
@@ -233,11 +247,9 @@ class Calibrator(object):
         self.name = name
         self.min_img_size = min_img_size
         self.camera_info = camera_info
-
         self.size = None
-        if self.camera_info is not None:       
+        if self.camera_info is not None:
             self.size = (self.camera_info.height, self.camera_info.width)
-
 
     def mkgray(self, msg):
         """
@@ -370,7 +382,7 @@ class Calibrator(object):
         height = img.shape[0]
         width = img.shape[1]
         scale = math.sqrt( (width*height) / float(self.min_img_size[0]* self.min_img_size[1]) )
-        if scale  != 1.0:
+        if scale  > 1.0:
             scrib = cv2.resize(img, (int(width / scale), int(height / scale)))
         else:
             scrib = img
@@ -438,7 +450,7 @@ class Calibrator(object):
         print("P = ", numpy.ravel(p).tolist())
 
     # TODO Get rid of OST format, show output as YAML instead
-    def lrost(self, name, d, k, r, p):
+    def lrost(self, name, d, k, r, p, sz):
         calmessage = (
         "# oST version 5.0 parameters\n"
         + "\n"
@@ -446,10 +458,10 @@ class Calibrator(object):
         + "[image]\n"
         + "\n"
         + "width\n"
-        + str(self.size[0]) + "\n"
+        + str(sz[0]) + "\n"
         + "\n"
         + "height\n"
-        + str(self.size[1]) + "\n"
+        + str(sz[1]) + "\n"
         + "\n"
         + "[%s]" % name + "\n"
         + "\n"
@@ -623,8 +635,7 @@ class MonoCalibrator(Calibrator):
 
         Apply the post-calibration undistortion to the source points
         """
-
-        return cv2.undistortPoints(src, self.intrinsics, self.distortion, R = self.R, P = self.P)
+        return cv2.undistortPoints(src, self.intrinsics, self.distortion, R=self.R, P=self.P)
 
     def as_message(self):
         """ Return the camera calibration as a CameraInfo message """
@@ -645,7 +656,7 @@ class MonoCalibrator(Calibrator):
         self.lrreport(self.distortion, self.intrinsics, self.R, self.P)
 
     def ost(self):
-        return self.lrost(self.name, self.distortion, self.intrinsics, self.R, self.P)
+        return self.lrost(self.name, self.distortion, self.intrinsics, self.R, self.P, self.size)
 
     def linear_error_from_image(self, image):
         """
@@ -850,7 +861,7 @@ class StereoCalibrator(Calibrator):
             raise CalibrationException("No corners found in images!")
         return good
 
-    def cal_fromcorners(self, good):
+    def cal_fromcorners(self, good, extrinsics_only=False):
         # Perform monocular calibrations
         lcorners = [(l, b) for (l, r, b) in good]
         rcorners = [(r, b) for (l, r, b) in good]
@@ -867,6 +878,8 @@ class StereoCalibrator(Calibrator):
 
         self.T = numpy.zeros((3, 1), dtype=numpy.float64)
         self.R = numpy.eye(3, dtype=numpy.float64)
+
+
         cv2.stereoCalibrate(opts, lipts, ripts, self.size,
                            self.l.intrinsics, self.l.distortion,
                            self.r.intrinsics, self.r.distortion,
@@ -874,6 +887,10 @@ class StereoCalibrator(Calibrator):
                            self.T,                            # T
                            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 1, 1e-5),
                            flags = flags)
+
+        print "Stereo Extrinsics (R, T):"
+        print self.R
+        print self.T
 
         self.set_alpha(0.0)
 
@@ -885,19 +902,30 @@ class StereoCalibrator(Calibrator):
         original image are in calibrated image).
         """
 
-        cv2.stereoRectify(self.l.intrinsics,
-                         self.l.distortion,
-                         self.r.intrinsics,
-                         self.r.distortion,
-                         self.size,
-                         self.R,
-                         self.T,
-                         self.l.R, self.r.R, self.l.P, self.r.P,
-                         alpha = a)
-        
-        cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.size, cv2.CV_32FC1,
+        cv2.stereoRectify(
+            self.l.intrinsics,
+            self.l.distortion,
+            self.r.intrinsics,
+            self.r.distortion,
+            self.size,
+            self.R,
+            self.T,
+            self.l.R,
+            self.r.R,
+            self.l.P,
+            self.r.P,
+            alpha=a)
+
+        if self.l.camera_info is not None and self.r.camera_info is not None:
+            self.l.R = numpy.reshape(numpy.asarray(self.l.camera_info.R, dtype=numpy.float64), (3, 3))
+            self.l.P = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
+            self.r.R = numpy.reshape(numpy.asarray(self.r.camera_info.R, dtype=numpy.float64), (3, 3))
+            self.r.P = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+            print("***Fixing R and P from known intrinsics")
+
+        cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.l.size, cv2.CV_32FC1,
                                    self.l.mapx, self.l.mapy)
-        cv2.initUndistortRectifyMap(self.r.intrinsics, self.r.distortion, self.r.R, self.r.P, self.size, cv2.CV_32FC1,
+        cv2.initUndistortRectifyMap(self.r.intrinsics, self.r.distortion, self.r.R, self.r.P, self.r.size, cv2.CV_32FC1,
                                    self.r.mapx, self.r.mapy)
 
     def as_message(self):
@@ -931,8 +959,8 @@ class StereoCalibrator(Calibrator):
         print("self.R ", numpy.ravel(self.R).tolist())
 
     def ost(self):
-        return (self.lrost(self.name + "/left", self.l.distortion, self.l.intrinsics, self.l.R, self.l.P) +
-          self.lrost(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P))
+        return (self.lrost(self.name + "/left", self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size) +
+          self.lrost(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size))
 
     # TODO Get rid of "from_images" versions of these, instead have function to get undistorted corners
     def epipolar_error_from_images(self, limage, rimage):
