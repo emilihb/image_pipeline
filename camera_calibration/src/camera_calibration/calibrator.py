@@ -191,11 +191,12 @@ def _get_circles(img, board, pattern):
    
     # # # Filter by Area.
     params.filterByArea = True
-    params.minArea = 10
+    # params.minArea = 10
     params.maxArea = 10e4;
     # Filter by Inertia
     params.filterByInertia = True
-    params.minInertiaRatio = 0.01
+    params.minInertiaRatio = 0.001
+    params.filterByCircularity = False;
 
     bd = cv2.SimpleBlobDetector(params)
 
@@ -861,36 +862,75 @@ class StereoCalibrator(Calibrator):
             raise CalibrationException("No corners found in images!")
         return good
 
-    def cal_fromcorners(self, good, extrinsics_only=False):
-        # Perform monocular calibrations
-        lcorners = [(l, b) for (l, r, b) in good]
-        rcorners = [(r, b) for (l, r, b) in good]
-        self.l.cal_fromcorners(lcorners)
-        self.r.cal_fromcorners(rcorners)
+    def cal_fromcorners(self, good):
+        if self.l.camera_info is not None and self.r.camera_info is not None:
+            print("***Known intrinsics: Fixing K and setting D=0")
+            tmp = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
+            self.l.intrinsics = tmp[:, 0:3]
+            tmp = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+            self.r.intrinsics = tmp[:, 0:3]
+            self.l.distortion = numpy.zeros((len(self.l.camera_info.D), 1), dtype=numpy.float64)
+            self.r.distortion = numpy.zeros((len(self.r.camera_info.D), 1), dtype=numpy.float64)
+            self.l.R = numpy.eye(3, dtype=numpy.float64)
+            self.l.P = numpy.zeros((3, 4), dtype=numpy.float64)
+            self.r.R = numpy.eye(3, dtype=numpy.float64)
+            self.r.P = numpy.zeros((3, 4), dtype=numpy.float64)
+            self.l.set_alpha(0.0)
+            self.r.set_alpha(0.0)
+        else:  # Perform monocular calibrations
+            lcorners = [(l, b) for (l, r, b) in good]
+            rcorners = [(r, b) for (l, r, b) in good]
+            self.l.cal_fromcorners(lcorners)
+            self.r.cal_fromcorners(rcorners)
 
-        lipts = [ l for (l, _, _) in good ]
-        ripts = [ r for (_, r, _) in good ]
-        boards = [ b for (_, _, b) in good ]
-        
+        lipts = [l for (l, _, _) in good]
+        ripts = [r for (_, r, _) in good]
+        boards = [b for (_, _, b) in good]
+
         opts = self.mk_object_points(boards, True)
 
         flags = cv2.CALIB_FIX_INTRINSIC
+        flags |= cv2.CALIB_FIX_K6
+        flags |= cv2.CALIB_FIX_K5
+        flags |= cv2.CALIB_FIX_K4
+        flags |= cv2.CALIB_FIX_K3
+        flags |= cv2.CALIB_FIX_K2
+        flags |= cv2.CALIB_FIX_K1
 
         self.T = numpy.zeros((3, 1), dtype=numpy.float64)
         self.R = numpy.eye(3, dtype=numpy.float64)
 
+        # print "CAL_FROM CORNERS-----------------"
+        # print "l.K,l.D, r.K, r.D"
+        # print self.l.intrinsics
+        # print self.l.distortion
+        # print self.r.intrinsics
+        # print self.r.distortion
+        # print "---------------------------------"
 
-        cv2.stereoCalibrate(opts, lipts, ripts, self.size,
-                           self.l.intrinsics, self.l.distortion,
-                           self.r.intrinsics, self.r.distortion,
-                           self.R,                            # R
-                           self.T,                            # T
-                           criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 1, 1e-5),
-                           flags = flags)
+        cv2.stereoCalibrate(
+            opts,
+            lipts,
+            ripts,
+            self.size,
+            self.l.intrinsics,
+            self.l.distortion,
+            self.r.intrinsics,
+            self.r.distortion,
+            self.R,
+            self.T,
+            criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 1, 1e-5),
+            flags=flags)
 
-        print "Stereo Extrinsics (R, T):"
+        print "Stereo Extrinsics:"
+        print "Rotation Matrix:"
         print self.R
-        print self.T
+        euler = numpy.array([
+            numpy.arctan2(self.R[2, 1], self.R[2, 2]),
+            numpy.arctan2(-self.R[2, 0], numpy.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
+            numpy.arctan2(self.R[1, 0], self.R[0, 0])])
+        print "Euler\n\trad: %s\n\tdeg: %s" % (numpy.array_str(euler), numpy.array_str(euler*180./numpy.pi))
+        print "T: %s" % (numpy.array_str(numpy.reshape(self.T, (-1,))))
 
         self.set_alpha(0.0)
 
@@ -921,7 +961,7 @@ class StereoCalibrator(Calibrator):
             self.l.P = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
             self.r.R = numpy.reshape(numpy.asarray(self.r.camera_info.R, dtype=numpy.float64), (3, 3))
             self.r.P = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
-            print("***Fixing R and P from known intrinsics")
+            print("***Rectification maps: Fixing R and P from known intrinsics")
 
         cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.l.size, cv2.CV_32FC1,
                                    self.l.mapx, self.l.mapy)
