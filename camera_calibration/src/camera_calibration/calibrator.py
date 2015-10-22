@@ -289,7 +289,8 @@ class Calibrator(object):
         p_y = min(1.0, max(0.0, (numpy.mean(Ys) - border / 2) / (height - border)))
         p_size = math.sqrt(area / (width * height))
         skew = _get_skew(corners, board)
-        params = [p_x, p_y, p_size, skew]
+        params = [p_x, p_y, p_size]
+        # params = [p_x, p_y, p_size, skew]
         return params
 
     def is_good_sample(self, params):
@@ -1121,7 +1122,8 @@ class StereoCalibrator(Calibrator):
                 if self.is_good_sample(params):
                     self.db.append( (params, lgray, rgray) )
                     self.good_corners.append( (lcorners, rcorners, lboard) )
-                    print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f, skew = %.3f" % tuple([len(self.db)] + params)))
+                    # print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f, skew = %.3f" % tuple([len(self.db)] + params)))
+                    print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f" % tuple([len(self.db)] + params)))
 
         rv = StereoDrawable()
         rv.lscrib = lscrib
