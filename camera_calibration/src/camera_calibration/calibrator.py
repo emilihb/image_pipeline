@@ -383,7 +383,7 @@ class Calibrator(object):
         height = img.shape[0]
         width = img.shape[1]
         scale = math.sqrt( (width*height) / float(self.min_img_size[0]* self.min_img_size[1]) )
-        if scale  > 1.0:
+        if scale  != 1.0:
             scrib = cv2.resize(img, (int(width / scale), int(height / scale)))
         else:
             scrib = img
@@ -398,7 +398,7 @@ class Calibrator(object):
             # Scale corners back to full size image
             corners = None
             if ok:
-                if scale > 1.0:
+                if scale != 1.0:
                     # Refine up-scaled corners in the original full-res image
                     # TODO Does this really make a difference in practice?
                     corners_unrefined = downsampled_corners.copy()
@@ -420,7 +420,7 @@ class Calibrator(object):
             # Scale corners to downsampled image for display
             downsampled_corners = None
             if ok:
-                if scale > 1.0:
+                if scale != 1.0:
                     downsampled_corners = corners.copy()
                     downsampled_corners[:,:,0] /= x_scale
                     downsampled_corners[:,:,1] /= y_scale
