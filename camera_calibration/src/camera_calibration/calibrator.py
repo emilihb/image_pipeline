@@ -288,9 +288,11 @@ class Calibrator(object):
         p_x = min(1.0, max(0.0, (numpy.mean(Xs) - border / 2) / (width  - border)))
         p_y = min(1.0, max(0.0, (numpy.mean(Ys) - border / 2) / (height - border)))
         p_size = math.sqrt(area / (width * height))
-        skew = _get_skew(corners, board)
-        params = [p_x, p_y, p_size]
-        # params = [p_x, p_y, p_size, skew]
+        if self.camera_info is None:
+            skew = _get_skew(corners, board)
+            params = [p_x, p_y, p_size, skew]
+        else:
+            params = [p_x, p_y, p_size]
         return params
 
     def is_good_sample(self, params):
@@ -586,17 +588,17 @@ class MonoCalibrator(Calibrator):
 
         self.intrinsics = numpy.zeros((3, 3), numpy.float64)
         if self.calib_flags & cv2.CALIB_RATIONAL_MODEL:
-            self.distortion = numpy.zeros((8, 1), numpy.float64) # rational polynomial
+            self.distortion = numpy.zeros((8, 1), numpy.float64)  # rational polynomial
         else:
-            self.distortion = numpy.zeros((5, 1), numpy.float64) # plumb bob
+            self.distortion = numpy.zeros((5, 1), numpy.float64)  # plumb bob
         # If FIX_ASPECT_RATIO flag set, enforce focal lengths have 1/1 ratio
-        self.intrinsics[0,0] = 1.0
-        self.intrinsics[1,1] = 1.0
+        self.intrinsics[0, 0] = 1.0
+        self.intrinsics[1, 1] = 1.0
         cv2.calibrateCamera(
-                   opts, ipts,
-                   self.size, self.intrinsics,
-                   self.distortion,
-                   flags = self.calib_flags)
+            opts, ipts,
+            self.size, self.intrinsics,
+            self.distortion,
+            flags=self.calib_flags)
 
         # R is identity matrix for monocular calibration
         self.R = numpy.eye(3, dtype=numpy.float64)
@@ -1120,10 +1122,12 @@ class StereoCalibrator(Calibrator):
             if lcorners is not None and rcorners is not None:
                 params = self.get_parameters(lcorners, lboard, (lgray.shape[1], lgray.shape[0]))
                 if self.is_good_sample(params):
-                    self.db.append( (params, lgray, rgray) )
-                    self.good_corners.append( (lcorners, rcorners, lboard) )
-                    # print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f, skew = %.3f" % tuple([len(self.db)] + params)))
-                    print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f" % tuple([len(self.db)] + params)))
+                    self.db.append((params, lgray, rgray))
+                    self.good_corners.append((lcorners, rcorners, lboard))
+                    if len(params) == 3:
+                        print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f" % tuple([len(self.db)] + params)))
+                    else:
+                        print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f, skew = %.3f" % tuple([len(self.db)] + params)))
 
         rv = StereoDrawable()
         rv.lscrib = lscrib
@@ -1132,14 +1136,14 @@ class StereoCalibrator(Calibrator):
         rv.epierror = epierror
         return rv
 
-    def do_calibration(self, dump = False):
+    def do_calibration(self, dump=False):
         print "DO CALIGRATION"
         # TODO MonoCalibrator collects corners if needed here
         # Dump should only occur if user wants it
         if dump:
             pickle.dump((self.is_mono, self.size, self.good_corners),
                         open("/tmp/camera_calibration_%08x.pickle" % random.getrandbits(32), "w"))
-        self.size = (self.db[0][1].shape[1], self.db[0][1].shape[0]) # TODO Needs to be set externally
+        self.size = (self.db[0][1].shape[1], self.db[0][1].shape[0])  # TODO Needs to be set externally
         self.l.size = self.size
         self.r.size = self.size
         self.cal_fromcorners(self.good_corners)

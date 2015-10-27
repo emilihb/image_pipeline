@@ -97,7 +97,8 @@ class ConsumerThread(threading.Thread):
 class CalibrationNode:
     def __init__(self, boards, service_check=True, synchronizer=message_filters.TimeSynchronizer, flags=0,
                  pattern=Patterns.Chessboard, camera_name='', checkerboard_flags=0,
-                 min_img_size=(640, 480)):
+                 min_img_size=(640, 480),
+                 extrinsics_only=False):
         if service_check:
             # assume any non-default service names have been set.  Wait for the service to become ready
             for svcname in ["camera", "left_camera", "right_camera"]:
@@ -132,8 +133,11 @@ class CalibrationNode:
                                                                sensor_msgs.srv.SetCameraInfo)
         self.set_right_camera_info_service = rospy.ServiceProxy("%s/set_camera_info" % rospy.remap_name("right_camera"),
                                                                 sensor_msgs.srv.SetCameraInfo)
-        self.linfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("left_camera"), sensor_msgs.msg.CameraInfo, self.lcamera_info)
-        self.rinfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("right_camera"), sensor_msgs.msg.CameraInfo, self.rcamera_info)
+        self._left_camera_info = None
+        self._right_camera_info = None
+        if extrinsics_only:
+            self.linfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("left_camera"), sensor_msgs.msg.CameraInfo, self.lcamera_info)
+            self.rinfo_sub = rospy.Subscriber("%s/camera_info" % rospy.remap_name("right_camera"), sensor_msgs.msg.CameraInfo, self.rcamera_info)
 
         self.q_mono = deque([], 1)
         self.q_stereo = deque([], 1)
@@ -147,9 +151,10 @@ class CalibrationNode:
         sth = ConsumerThread(self.q_stereo, self.handle_stereo)
         sth.setDaemon(True)
         sth.start()
-        
+
     def redraw_stereo(self, *args):
         pass
+
     def redraw_monocular(self, *args):
         pass
 
@@ -168,7 +173,7 @@ class CalibrationNode:
         self.rinfo_sub.unregister()
 
     def handle_monocular(self, msg):
-        if self.c == None:
+        if self.c is None:
             if self._camera_name:
                 self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
                                         checkerboard_flags=self._checkerboard_flags)
@@ -182,7 +187,7 @@ class CalibrationNode:
         self.redraw_monocular(drawable)
 
     def handle_stereo(self, msg):
-        if self.c == None:
+        if self.c is None:
             if self._camera_name:
                 self.c = StereoCalibrator(
                     self._boards,
@@ -495,7 +500,9 @@ def main():
 
     rospy.init_node('cameracalibrator')
     node = OpenCVCalibrationNode(boards, options.service_check, sync, calib_flags, pattern, options.camera_name,
-                                 checkerboard_flags=checkerboard_flags, min_img_size=img_size)
+                                 checkerboard_flags=checkerboard_flags,
+                                 min_img_size=img_size,
+                                 extrinsics_only=options.extrinsics_only)
     rospy.spin()
 
 if __name__ == "__main__":
