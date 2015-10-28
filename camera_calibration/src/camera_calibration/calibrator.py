@@ -46,15 +46,21 @@ import random
 import sensor_msgs.msg
 import tarfile
 import time
+import yaml
 
+
+def yaml_matrix(row, col, data):
+    return dict(rows=row, cols=col, data=data)
 
 
 # Supported calibration patterns
 class Patterns:
     Chessboard, Circles, ACircles = list(range(3))
 
+
 class CalibrationException(Exception):
     pass
+
 
 # TODO: Make pattern per-board?
 class ChessboardInfo(object):
@@ -251,6 +257,9 @@ class Calibrator(object):
         self.size = None
         if self.camera_info is not None:
             self.size = (self.camera_info.height, self.camera_info.width)
+        self.reprojection_error = None
+        self.rvecs = []
+        self.tvecs = []
 
     def mkgray(self, msg):
         """
@@ -453,6 +462,22 @@ class Calibrator(object):
         print("R = ", numpy.ravel(r).tolist())
         print("P = ", numpy.ravel(p).tolist())
 
+    def lrreport_verbose(self, name, image_ok, d, k, r, p, err, rvecs, tvecs):
+        names = [str(name) + "-%04d.png"  % i for (i, ok) in image_ok if ok]
+        data = dict(
+            D=numpy.ravel(d).tolist(),
+            K=numpy.ravel(k).tolist(),
+            R=numpy.ravel(r).tolist(),
+            P=numpy.ravel(p).tolist(),
+            reprojection_error=err,
+            num_collected_images=len(image_ok),
+            num_good_images=len(names))
+
+        for n, r, t in zip(names, rvecs, tvecs):
+            data[str(n)] = dict(rvec=r, tvec=t)
+
+        return data
+
     # TODO Get rid of OST format, show output as YAML instead
     def lrost(self, name, d, k, r, p, sz):
         calmessage = (
@@ -489,6 +514,23 @@ class Calibrator(object):
         + "\n")
         assert len(calmessage) < 525, "Calibration info must be less than 525 bytes"
         return calmessage
+
+    def lryaml(self, name, d, k, r, p, sz):
+        data = dict(
+            image_width=sz[0],
+            image_height=sz[1],
+            camera_name=name,
+            camera_matrix=yaml_matrix(k.shape[0], k.shape[1], k.ravel().tolist()),
+            distortion_coefficients=yaml_matrix(1, d.size, d.ravel().tolist()),
+            rectification_matrix=yaml_matrix(r.shape[0], r.shape[1], r.ravel().tolist()),
+            projection_matrix=yaml_matrix(p.shape[0], p.shape[1], p.ravel().tolist()))
+
+        if d.size == 8:
+            data["distortion_model"] = "rational"
+        else:
+            data["distortion_model"] = "plumb_bob"
+
+        return yaml.dump(data)
 
     def do_save(self):
         filename = '/tmp/calibrationdata.tar.gz'
@@ -570,6 +612,7 @@ class MonoCalibrator(Calibrator):
         corners = [self.get_corners(i) for i in images]
 
         goodcorners = [(co, b) for (ok, co, b) in corners if ok]
+        self.image_ok = [(idx, ok) for idx, (ok, _, _) in enumerate(corners)]
         if not goodcorners:
             raise CalibrationException("No corners found in images!")
         return goodcorners
@@ -594,11 +637,14 @@ class MonoCalibrator(Calibrator):
         # If FIX_ASPECT_RATIO flag set, enforce focal lengths have 1/1 ratio
         self.intrinsics[0, 0] = 1.0
         self.intrinsics[1, 1] = 1.0
-        cv2.calibrateCamera(
+        self.reprojection_error, _, _, self.rvecs, self.tvecs = cv2.calibrateCamera(
             opts, ipts,
             self.size, self.intrinsics,
             self.distortion,
             flags=self.calib_flags)
+       
+        self.rvecs = [i.ravel().tolist() for i in self.rvecs]
+        self.tvecs = [i.ravel().tolist() for i in self.tvecs]
 
         # R is identity matrix for monocular calibration
         self.R = numpy.eye(3, dtype=numpy.float64)
@@ -661,6 +707,13 @@ class MonoCalibrator(Calibrator):
 
     def ost(self):
         return self.lrost(self.name, self.distortion, self.intrinsics, self.R, self.P, self.size)
+
+    def yaml_strm(self):
+        return self.lryaml(self.name, self.distortion, self.intrinsics, self.R, self.P, self.size)
+
+    def report_verbose(self):
+        d = self.lrreport_verbose("left", self.image_ok, self.distortion, self.intrinsics, self.R, self.P, self.reprojection_error, self.rvecs, self.tvecs)
+        return yaml.dump(d)
 
     def linear_error_from_image(self, image):
         """
@@ -788,12 +841,13 @@ class MonoCalibrator(Calibrator):
             taradd(name, cv2.imencode(".png", im)[1].tostring())
 
         taradd('ost.txt', self.ost())
+        taradd('left.yml', self.yaml_strm())
+        taradd('report.yml', self.report_verbose())
 
     def do_tarfile_calibration(self, filename):
         archive = tarfile.open(filename, 'r')
 
         limages = [ image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('left') and (f.endswith('.pgm') or f.endswith('png'))) ]
-
         self.cal(limages)
 
 # TODO Replicate MonoCalibrator improvements in stereo
@@ -861,6 +915,15 @@ class StereoCalibrator(Calibrator):
         good = [(lco, rco, b) for ((lco, b), (rco, br)) in zip( lcorners, rcorners)
                 if (lco is not None and rco is not None)]
 
+        self.image_ok = []
+        idx = 0
+        for idx, ((lco, b), (rco, br)) in enumerate(zip(lcorners, rcorners)):
+            if (lco is not None and rco is not None):
+                self.image_ok.append((idx, True))
+            else:
+                self.image_ok.append((idx, False))
+
+        
         if len(good) == 0:
             raise CalibrationException("No corners found in images!")
         return good
@@ -903,15 +966,7 @@ class StereoCalibrator(Calibrator):
         self.T = numpy.zeros((3, 1), dtype=numpy.float64)
         self.R = numpy.eye(3, dtype=numpy.float64)
 
-        # print "CAL_FROM CORNERS-----------------"
-        # print "l.K,l.D, r.K, r.D"
-        # print self.l.intrinsics
-        # print self.l.distortion
-        # print self.r.intrinsics
-        # print self.r.distortion
-        # print "---------------------------------"
-
-        cv2.stereoCalibrate(
+        self.reprojection_error, _, _, _, _, _, _, _, _ = cv2.stereoCalibrate(
             opts,
             lipts,
             ripts,
@@ -928,11 +983,11 @@ class StereoCalibrator(Calibrator):
         print "Stereo Extrinsics:"
         print "Rotation Matrix:"
         print self.R
-        euler = numpy.array([
+        self.euler = numpy.array([
             numpy.arctan2(self.R[2, 1], self.R[2, 2]),
             numpy.arctan2(-self.R[2, 0], numpy.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
             numpy.arctan2(self.R[1, 0], self.R[0, 0])])
-        print "Euler\n\trad: %s\n\tdeg: %s" % (numpy.array_str(euler), numpy.array_str(euler*180./numpy.pi))
+        print "Euler\n\trad: %s\n\tdeg: %s" % (numpy.array_str(self.euler), numpy.array_str(self.euler*180./numpy.pi))
         print "T: %s" % (numpy.array_str(numpy.reshape(self.T, (-1,))))
 
         self.set_alpha(0.0)
@@ -1002,8 +1057,23 @@ class StereoCalibrator(Calibrator):
         print("self.R ", numpy.ravel(self.R).tolist())
 
     def ost(self):
-        return (self.lrost(self.name + "/left", self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size) +
-          self.lrost(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size))
+        return (
+            self.lrost(self.name + "/left", self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size) +
+            self.lrost(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size))
+
+    def yaml_strm(self):
+        return (
+            self.lryaml(self.name + "/left", self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size),
+            self.lryaml(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size))
+
+    def report_verbose(self):
+        deg = self.euler*180/numpy.pi
+        e = dict(rotation_matrix=self.R.ravel().tolist(), translation=self.T.ravel().tolist(), euler_rad=self.euler.tolist(), euler_deg=deg.tolist())
+        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.reprojection_error, self.l.rvecs, self.l.tvecs)
+        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.reprojection_error, self.r.rvecs, self.r.tvecs)
+        report = dict(global_reprojection_error=self.reprojection_error, extrinsics=e, left=l, right=r)
+        return yaml.dump(report)
+
 
     # TODO Get rid of "from_images" versions of these, instead have function to get undistorted corners
     def epipolar_error_from_images(self, limage, rimage):
@@ -1169,6 +1239,10 @@ class StereoCalibrator(Calibrator):
             taradd(name, cv2.imencode(".png", im)[1].tostring())
 
         taradd('ost.txt', self.ost())
+        yml = self.yaml_strm()
+        taradd(self.name + "_left.yml", yml[0])
+        taradd(self.name + "_right.yml", yml[1])
+        taradd('report.yml', self.report_verbose())
 
     def do_tarfile_calibration(self, filename):
         archive = tarfile.open(filename, 'r')
