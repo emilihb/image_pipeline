@@ -462,56 +462,58 @@ class Calibrator(object):
         print("R = ", numpy.ravel(r).tolist())
         print("P = ", numpy.ravel(p).tolist())
 
-    def lrreport_verbose(self, name, image_ok, d, k, r, p, err, rvecs, tvecs):
-        names = [str(name) + "-%04d.png"  % i for (i, ok) in image_ok if ok]
+    def lrreport_verbose(self, name, image_ok, d, k, r, p, sz, error, rvecs, tvecs, img_error):
+        names = [str(name) + "-%04d.png" % i for (i, ok) in image_ok if ok]
         data = dict(
             D=numpy.ravel(d).tolist(),
             K=numpy.ravel(k).tolist(),
             R=numpy.ravel(r).tolist(),
             P=numpy.ravel(p).tolist(),
-            reprojection_error=err,
+            reprojection_error=error,
             num_collected_images=len(image_ok),
-            num_good_images=len(names))
+            num_good_images=len(names),
+            image_width=sz[1],
+            image_height=sz[0])
 
-        for n, r, t in zip(names, rvecs, tvecs):
-            data[str(n)] = dict(rvec=r, tvec=t)
+        for n, r, t, e in zip(names, rvecs, tvecs, img_error):
+            data[str(n)] = dict(rvec=r, tvec=t, reprojection_error=float(e))
 
         return data
 
     # TODO Get rid of OST format, show output as YAML instead
     def lrost(self, name, d, k, r, p, sz):
         calmessage = (
-        "# oST version 5.0 parameters\n"
-        + "\n"
-        + "\n"
-        + "[image]\n"
-        + "\n"
-        + "width\n"
-        + str(sz[0]) + "\n"
-        + "\n"
-        + "height\n"
-        + str(sz[1]) + "\n"
-        + "\n"
-        + "[%s]" % name + "\n"
-        + "\n"
-        + "camera matrix\n"
-        + " ".join(["%8f" % k[0,i] for i in range(3)]) + "\n"
-        + " ".join(["%8f" % k[1,i] for i in range(3)]) + "\n"
-        + " ".join(["%8f" % k[2,i] for i in range(3)]) + "\n"
-        + "\n"
-        + "distortion\n"
-        + " ".join(["%8f" % d[i,0] for i in range(d.shape[0])]) + "\n"
-        + "\n"
-        + "rectification\n"
-        + " ".join(["%8f" % r[0,i] for i in range(3)]) + "\n"
-        + " ".join(["%8f" % r[1,i] for i in range(3)]) + "\n"
-        + " ".join(["%8f" % r[2,i] for i in range(3)]) + "\n"
-        + "\n"
-        + "projection\n"
-        + " ".join(["%8f" % p[0,i] for i in range(4)]) + "\n"
-        + " ".join(["%8f" % p[1,i] for i in range(4)]) + "\n"
-        + " ".join(["%8f" % p[2,i] for i in range(4)]) + "\n"
-        + "\n")
+            "# oST version 5.0 parameters\n"
+            + "\n"
+            + "\n"
+            + "[image]\n"
+            + "\n"
+            + "width\n"
+            + str(sz[0]) + "\n"
+            + "\n"
+            + "height\n"
+            + str(sz[1]) + "\n"
+            + "\n"
+            + "[%s]" % name + "\n"
+            + "\n"
+            + "camera matrix\n"
+            + " ".join(["%8f" % k[0, i] for i in range(3)]) + "\n"
+            + " ".join(["%8f" % k[1, i] for i in range(3)]) + "\n"
+            + " ".join(["%8f" % k[2, i] for i in range(3)]) + "\n"
+            + "\n"
+            + "distortion\n"
+            + " ".join(["%8f" % d[i, 0] for i in range(d.shape[0])]) + "\n"
+            + "\n"
+            + "rectification\n"
+            + " ".join(["%8f" % r[0, i] for i in range(3)]) + "\n"
+            + " ".join(["%8f" % r[1, i] for i in range(3)]) + "\n"
+            + " ".join(["%8f" % r[2, i] for i in range(3)]) + "\n"
+            + "\n"
+            + "projection\n"
+            + " ".join(["%8f" % p[0, i] for i in range(4)]) + "\n"
+            + " ".join(["%8f" % p[1, i] for i in range(4)]) + "\n"
+            + " ".join(["%8f" % p[2, i] for i in range(4)]) + "\n"
+            + "\n")
         assert len(calmessage) < 525, "Calibration info must be less than 525 bytes"
         return calmessage
 
@@ -535,7 +537,7 @@ class Calibrator(object):
     def do_save(self):
         filename = '/tmp/calibrationdata.tar.gz'
         tf = tarfile.open(filename, 'w:gz')
-        self.do_tarfile_save(tf) # Must be overridden in subclasses
+        self.do_tarfile_save(tf)  # Must be overridden in subclasses
         tf.close()
         print(("Wrote calibration data to", filename))
 
@@ -550,6 +552,7 @@ def image_from_archive(archive, name):
     imagefiledata.resize((1, imagefiledata.size))
     return cv2.imdecode(imagefiledata, cv2.IMREAD_COLOR)
 
+
 class ImageDrawable(object):
     """
     Passed to CalibrationNode after image handled. Allows plotting of images
@@ -558,12 +561,13 @@ class ImageDrawable(object):
     def __init__(self):
         self.params = None
 
+
 class MonoDrawable(ImageDrawable):
     def __init__(self):
         ImageDrawable.__init__(self)
         self.scrib = None
         self.linear_error = -1.0
-                
+
 
 class StereoDrawable(ImageDrawable):
     def __init__(self):
@@ -619,14 +623,13 @@ class MonoCalibrator(Calibrator):
 
     def cal_fromcorners(self, good):
         """
-        :param good: Good corner positions and boards 
+        :param good: Good corner positions and boards
         :type good: [(corners, ChessboardInfo)]
 
-        
         """
-        boards = [ b for (_, b) in good ]
+        boards = [b for (_, b) in good]
 
-        ipts = [ points for (points, _) in good ]
+        ipts = [points for (points, _) in good]
         opts = self.mk_object_points(boards)
 
         self.intrinsics = numpy.zeros((3, 3), numpy.float64)
@@ -642,15 +645,13 @@ class MonoCalibrator(Calibrator):
             self.size, self.intrinsics,
             self.distortion,
             flags=self.calib_flags)
-       
-        self.rvecs = [i.ravel().tolist() for i in self.rvecs]
-        self.tvecs = [i.ravel().tolist() for i in self.tvecs]
 
         # R is identity matrix for monocular calibration
         self.R = numpy.eye(3, dtype=numpy.float64)
         self.P = numpy.zeros((3, 4), dtype=numpy.float64)
 
         self.set_alpha(0.0)
+        self.img_reprojection_error, _ = self.compute_reprojection_error(opts, ipts)
 
     def set_alpha(self, a):
         """
@@ -666,7 +667,7 @@ class MonoCalibrator(Calibrator):
         ncm, _ = cv2.getOptimalNewCameraMatrix(self.intrinsics, self.distortion, self.size, a)
         for j in range(3):
             for i in range(3):
-                self.P[j,i] = ncm[j, i]
+                self.P[j, i] = ncm[j, i]
         self.mapx, self.mapy = cv2.initUndistortRectifyMap(self.intrinsics, self.distortion, self.R, ncm, self.size, cv2.CV_32FC1)
 
     def remap(self, src):
@@ -691,7 +692,7 @@ class MonoCalibrator(Calibrator):
         """ Return the camera calibration as a CameraInfo message """
         return self.lrmsg(self.distortion, self.intrinsics, self.R, self.P)
 
-    def from_message(self, msg, alpha = 0.0):
+    def from_message(self, msg, alpha=0.0):
         """ Initialize the camera calibration from a CameraInfo message """
 
         self.size = (msg.width, msg.height)
@@ -712,7 +713,10 @@ class MonoCalibrator(Calibrator):
         return self.lryaml(self.name, self.distortion, self.intrinsics, self.R, self.P, self.size)
 
     def report_verbose(self):
-        d = self.lrreport_verbose("left", self.image_ok, self.distortion, self.intrinsics, self.R, self.P, self.reprojection_error, self.rvecs, self.tvecs)
+        rvecs = [i.ravel().tolist() for i in self.rvecs]
+        tvecs = [i.ravel().tolist() for i in self.tvecs]
+        d = self.lrreport_verbose("left", self.image_ok, self.distortion, self.intrinsics, self.R, self.P, self.size,
+            self.reprojection_error, rvecs, tvecs, self.img_reprojection_error)
         return yaml.dump(d)
 
     def linear_error_from_image(self, image):
@@ -726,6 +730,29 @@ class MonoCalibrator(Calibrator):
 
         undistorted = self.undistort_points(corners)
         return self.linear_error(undistorted, board)
+
+    def compute_reprojection_error(self, obj_pts, img_pts):
+        """
+        Mean reprojection error per image and total combined.
+        Useful for verbose report.
+
+        :param obj_pts: 3d points in the space
+        :param img_pts: 2d image points
+        :type obj_pts: 3xN or Nx3 array of arrays
+        :type img_pts: 2xN or Nx2 array of arrays
+        """
+        img_error = []
+        total_error = 0
+        total_points = 0
+        for img, obj, r, t in zip(img_pts, obj_pts, self.rvecs, self.tvecs):
+            reprojected_points, _ = cv2.projectPoints(obj, r, t, self.intrinsics, self.distortion)
+            norm = numpy.sum(numpy.abs(img - reprojected_points)**2)
+            err = numpy.sqrt(norm / len(obj))
+            img_error.append(err)
+            total_error += norm
+            total_points += len(obj)
+        mean_error = numpy.sqrt(total_error / total_points)
+        return numpy.asarray(img_error), mean_error
 
     @staticmethod
     def linear_error(corners, b):
@@ -1069,8 +1096,8 @@ class StereoCalibrator(Calibrator):
     def report_verbose(self):
         deg = self.euler*180/numpy.pi
         e = dict(rotation_matrix=self.R.ravel().tolist(), translation=self.T.ravel().tolist(), euler_rad=self.euler.tolist(), euler_deg=deg.tolist())
-        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.reprojection_error, self.l.rvecs, self.l.tvecs)
-        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.reprojection_error, self.r.rvecs, self.r.tvecs)
+        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size, self.l.reprojection_error, self.l.rvecs, self.l.tvecs)
+        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size, self.r.reprojection_error, self.r.rvecs, self.r.tvecs)
         report = dict(global_reprojection_error=self.reprojection_error, extrinsics=e, left=l, right=r)
         return yaml.dump(report)
 
