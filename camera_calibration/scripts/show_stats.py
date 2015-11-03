@@ -46,6 +46,8 @@ import yaml
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import sys
+import os
+import tarfile
 
 
 def normalize(angle):
@@ -54,18 +56,14 @@ def normalize(angle):
 
 
 def compose(a, b):
-    """6DoF composition between 'a' and 'b' with covariance -if provided.
+    """6DoF composition between 'a' and 'b'
 
     :param a: [x, y, z, roll, pitch, yaw] row/column vector
     :param b: [x, y, z, roll, pitch, yaw] or [x, y, z] row/column vector
-    :param Pa: a 6x6 covariance array
-    :param Pb: b 6x6 or 3x3 covariance array
     :type a: 6-element array
     :type b: 3 or 6-element array
-    :type Pa: 6x6 array
-    :type Pb: 3x3 or 6x6 array
-    :return: composition with covariance -if provided
-    :rtype: 2-element tuple (r, P) or (r, None)
+    :return: composition
+    :rtype: 6-element array
     """
     # ensure row vector for internal access
     if len(a.shape) is 2:
@@ -104,9 +102,8 @@ def camera(f=0.5, w=1.0, h=0.25):
         ])
 
 
-def parse_report_mono(filename, pattern="left-"):
-    stream = file(filename, 'r')
-    yml = yaml.load(stream)
+def parse_report_mono(strm, pattern="left-"):
+    yml = yaml.load(strm)
     intrinsics = sensor_msgs.msg.CameraInfo()
     intrinsics.width = yml['image_width']
     intrinsics.height = yml['image_height']
@@ -157,7 +154,7 @@ def plot_extrinsics(extrinsics):
     for (n, r, t, _) in extrinsics:
         euler = rodrigues_to_euler(r)
         new_cam = compose_camera(np.asarray(t+euler), cam)
-        ax.plot(new_cam[:, 0], new_cam[:, 1], new_cam[:, 2], label='parametric curve')
+        ax.plot(new_cam[:, 0], new_cam[:, 1], new_cam[:, 2])
         name.append(n)
 
     name = substract_letters(name)
@@ -205,15 +202,18 @@ def substract_letters(strm):
 
 
 def main(argv):
-    filename = ""
+    filename = "/tmp/calibrationdata.tar.gz"
     if len(argv) is 2:
         filename = argv[1]
-    else:
-        print "Usage: %s bagfile topic" % argv[0]
-        return
 
     try:
-        intrinsics, error, extrinsics = parse_report_mono(filename)
+        if tarfile.is_tarfile(filename):
+            archive = tarfile.open(filename, 'r')
+            strm = archive.extractfile('report.yml').read()
+        else:
+            strm = file(filename, 'r')
+
+        intrinsics, error, extrinsics = parse_report_mono(strm)
 
         name = [n for (n, _, _, _) in extrinsics]
         err_img = [e for (_, _, _, e) in extrinsics]
@@ -225,7 +225,7 @@ def main(argv):
         plt.show()
     except Exception as e:
         print "Exception:", e
+        print "Usage: %s filename.tar.gz (or .yml file)" % argv[0]
 
 if __name__ == '__main__':
     main(sys.argv)
-
