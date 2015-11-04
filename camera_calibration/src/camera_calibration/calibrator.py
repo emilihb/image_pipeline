@@ -462,7 +462,7 @@ class Calibrator(object):
         print("R = ", numpy.ravel(r).tolist())
         print("P = ", numpy.ravel(p).tolist())
 
-    def lrreport_verbose(self, name, image_ok, d, k, r, p, sz, error, rvecs, tvecs, img_error):
+    def lrreport_verbose(self, name, image_ok, d, k, r, p, sz, error, rvecs, tvecs, img_error=None):
         names = [str(name) + "-%04d.png" % i for (i, ok) in image_ok if ok]
         data = dict(
             D=numpy.ravel(d).tolist(),
@@ -474,6 +474,9 @@ class Calibrator(object):
             num_good_images=len(names),
             image_width=sz[1],
             image_height=sz[0])
+
+        if img_error is None:
+            img_error = [numpy.nan] * len(rvecs)
 
         for n, r, t, e in zip(names, rvecs, tvecs, img_error):
             data[str(n)] = dict(rvec=r, tvec=t, reprojection_error=float(e))
@@ -909,6 +912,8 @@ class StereoCalibrator(Calibrator):
         super(StereoCalibrator, self).__init__(*args, **lkwargs)
         self.l = MonoCalibrator(*args, **lkwargs)
         self.r = MonoCalibrator(*args, **rkwargs)
+        self.image_ok = []
+        self.idx = 0  # for image_ok
         print "L: ", self.l.size
         print "R: ", self.r.size
         # Collecting from two cameras in a horizontal stereo rig, can't get
@@ -936,21 +941,23 @@ class StereoCalibrator(Calibrator):
         For a sequence of left and right images, find pairs of images where both
         left and right have a chessboard, and return  their corners as a list of pairs.
         """
+
+        print "Collect corners!!!!!!!!!"
+
         # Pick out (corners, board) tuples
-        lcorners = [ self.downsample_and_detect(i)[1:4:2] for i in limages]
-        rcorners = [ self.downsample_and_detect(i)[1:4:2] for i in rimages]
-        good = [(lco, rco, b) for ((lco, b), (rco, br)) in zip( lcorners, rcorners)
+        lcorners = [self.downsample_and_detect(i)[1:4:2] for i in limages]
+        rcorners = [self.downsample_and_detect(i)[1:4:2] for i in rimages]
+        good = [(lco, rco, b) for ((lco, b), (rco, br)) in zip(lcorners, rcorners)
                 if (lco is not None and rco is not None)]
 
-        self.image_ok = []
-        idx = 0
-        for idx, ((lco, b), (rco, br)) in enumerate(zip(lcorners, rcorners)):
+        # self.image_ok = []
+        # idx = 0
+        for self.idx, ((lco, b), (rco, br)) in enumerate(zip(lcorners, rcorners)):
             if (lco is not None and rco is not None):
-                self.image_ok.append((idx, True))
+                self.image_ok.append((self.idx, True))
             else:
-                self.image_ok.append((idx, False))
+                self.image_ok.append((self.idx, False))
 
-        
         if len(good) == 0:
             raise CalibrationException("No corners found in images!")
         return good
@@ -1026,7 +1033,6 @@ class StereoCalibrator(Calibrator):
         in calibrated image are valid) to 1 (zoomed out, all pixels in
         original image are in calibrated image).
         """
-
         cv2.stereoRectify(
             self.l.intrinsics,
             self.l.distortion,
@@ -1049,9 +1055,9 @@ class StereoCalibrator(Calibrator):
             print("***Rectification maps: Fixing R and P from known intrinsics")
 
         cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.l.size, cv2.CV_32FC1,
-                                   self.l.mapx, self.l.mapy)
+                               self.l.mapx, self.l.mapy)
         cv2.initUndistortRectifyMap(self.r.intrinsics, self.r.distortion, self.r.R, self.r.P, self.r.size, cv2.CV_32FC1,
-                                   self.r.mapx, self.r.mapy)
+                               self.r.mapx, self.r.mapy)
 
     def as_message(self):
         """
@@ -1096,8 +1102,17 @@ class StereoCalibrator(Calibrator):
     def report_verbose(self):
         deg = self.euler*180/numpy.pi
         e = dict(rotation_matrix=self.R.ravel().tolist(), translation=self.T.ravel().tolist(), euler_rad=self.euler.tolist(), euler_deg=deg.tolist())
-        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size, self.l.reprojection_error, self.l.rvecs, self.l.tvecs)
-        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size, self.r.reprojection_error, self.r.rvecs, self.r.tvecs)
+        if self.l.camera_info is not None and self.r.camera_info is not None:
+            self.l.img_reprojection_error = None
+            self.r.img_reprojection_error = None
+        lrvecs = [i.ravel().tolist() for i in self.l.rvecs]
+        ltvecs = [i.ravel().tolist() for i in self.l.tvecs]
+        rrvecs = [i.ravel().tolist() for i in self.r.rvecs]
+        rtvecs = [i.ravel().tolist() for i in self.r.tvecs]
+        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size,
+            self.l.reprojection_error, lrvecs, ltvecs, self.l.img_reprojection_error)
+        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size,
+            self.r.reprojection_error, rrvecs, rtvecs, self.r.img_reprojection_error)
         report = dict(global_reprojection_error=self.reprojection_error, extrinsics=e, left=l, right=r)
         return yaml.dump(report)
 
@@ -1173,13 +1188,17 @@ class StereoCalibrator(Calibrator):
 
         if self.calibrated:
             # Show rectified images
+            # print "L/R scale: ", lx_scale, ly_scale, "/", rx_scale, ry_scale
             lremap = self.l.remap(lgray)
             rremap = self.r.remap(rgray)
             lrect = lremap
             rrect = rremap
+            # print "L/R size", lscrib_mono.shape, rscrib_mono.shape
             if lx_scale != 1.0 or ly_scale != 1.0:
+                # print "L-RESCALING"
                 lrect = cv2.resize(lremap, (lscrib_mono.shape[1], lscrib_mono.shape[0]))
             if rx_scale != 1.0 or ry_scale != 1.0:
+                # print "R-RESCALING"
                 rrect = cv2.resize(rremap, (rscrib_mono.shape[1], rscrib_mono.shape[0]))
 
             lscrib = cv2.cvtColor(lrect, cv2.COLOR_GRAY2BGR)
@@ -1189,15 +1208,15 @@ class StereoCalibrator(Calibrator):
             if lcorners is not None:
                 lundistorted = self.l.undistort_points(lcorners)
                 scrib_src = lundistorted.copy()
-                scrib_src[:,:,0] /= lx_scale
-                scrib_src[:,:,1] /= ly_scale
+                scrib_src[:, :, 0] /= lx_scale
+                scrib_src[:, :, 1] /= ly_scale
                 cv2.drawChessboardCorners(lscrib, (lboard.n_cols, lboard.n_rows), scrib_src, True)
 
             if rcorners is not None:
                 rundistorted = self.r.undistort_points(rcorners)
                 scrib_src = rundistorted.copy()
-                scrib_src[:,:,0] /= rx_scale
-                scrib_src[:,:,1] /= ry_scale
+                scrib_src[:, :, 0] /= rx_scale
+                scrib_src[:, :, 1] /= ry_scale
                 cv2.drawChessboardCorners(rscrib, (rboard.n_cols, rboard.n_rows), scrib_src, True)
 
             # Report epipolar error
@@ -1209,11 +1228,15 @@ class StereoCalibrator(Calibrator):
             rscrib = cv2.cvtColor(rscrib_mono, cv2.COLOR_GRAY2BGR)
             # Draw any detected chessboards onto display (downsampled) images
             if lcorners is not None:
-                cv2.drawChessboardCorners(lscrib, (lboard.n_cols, lboard.n_rows),
-                                         ldownsampled_corners, True)
+                cv2.drawChessboardCorners(
+                    lscrib,
+                    (lboard.n_cols, lboard.n_rows),
+                    ldownsampled_corners, True)
             if rcorners is not None:
-                cv2.drawChessboardCorners(rscrib, (rboard.n_cols, rboard.n_rows),
-                                         rdownsampled_corners, True)
+                cv2.drawChessboardCorners(
+                    rscrib,
+                    (rboard.n_cols, rboard.n_rows),
+                    rdownsampled_corners, True)
 
             # Add sample to database only if it's sufficiently different from any previous sample
             if lcorners is not None and rcorners is not None:
@@ -1221,6 +1244,8 @@ class StereoCalibrator(Calibrator):
                 if self.is_good_sample(params):
                     self.db.append((params, lgray, rgray))
                     self.good_corners.append((lcorners, rcorners, lboard))
+                    self.image_ok.append((self.idx, True))
+                    self.idx += 1
                     if len(params) == 3:
                         print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f" % tuple([len(self.db)] + params)))
                     else:
@@ -1234,7 +1259,7 @@ class StereoCalibrator(Calibrator):
         return rv
 
     def do_calibration(self, dump=False):
-        print "DO CALIGRATION"
+        print "DO CALIBRATION"
         # TODO MonoCalibrator collects corners if needed here
         # Dump should only occur if user wants it
         if dump:
@@ -1242,7 +1267,7 @@ class StereoCalibrator(Calibrator):
                         open("/tmp/camera_calibration_%08x.pickle" % random.getrandbits(32), "w"))
         self.size = (self.db[0][1].shape[1], self.db[0][1].shape[0])  # TODO Needs to be set externally
         self.l.size = self.size
-        self.r.size = self.size
+        self.r.size = (self.db[0][2].shape[1], self.db[0][2].shape[0])
         self.cal_fromcorners(self.good_corners)
         self.calibrated = True
         # DEBUG
@@ -1251,8 +1276,8 @@ class StereoCalibrator(Calibrator):
 
     def do_tarfile_save(self, tf):
         """ Write images and calibration solution to a tarfile object """
-        ims = ([("left-%04d.png"  % i, im) for i,(_, im, _) in enumerate(self.db)] +
-               [("right-%04d.png" % i, im) for i,(_, _, im) in enumerate(self.db)])
+        ims = ([("left-%04d.png" % i, im) for i, (_, im, _) in enumerate(self.db)] +
+               [("right-%04d.png" % i, im) for i, (_, _, im) in enumerate(self.db)])
 
         def taradd(name, buf):
             s = StringIO(buf)
@@ -1273,8 +1298,8 @@ class StereoCalibrator(Calibrator):
 
     def do_tarfile_calibration(self, filename):
         archive = tarfile.open(filename, 'r')
-        limages = [ image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('left') and (f.endswith('pgm') or f.endswith('png'))) ]
-        rimages = [ image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('right') and (f.endswith('pgm') or f.endswith('png'))) ]
+        limages = [image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('left') and (f.endswith('pgm') or f.endswith('png')))]
+        rimages = [image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('right') and (f.endswith('pgm') or f.endswith('png')))]
 
         if not len(limages) == len(rimages):
             raise CalibrationException("Left, right images don't match. %d left images, %d right" % (len(limages), len(rimages)))
@@ -1282,3 +1307,4 @@ class StereoCalibrator(Calibrator):
         ##\todo Check that the filenames match and stuff
 
         self.cal(limages, rimages)
+
