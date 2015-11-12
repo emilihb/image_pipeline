@@ -82,10 +82,11 @@ def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags 
         calibrator = StereoCalibrator(boards, calib_flags, pattern=pattern, camera_info=camera_info)
 
     calibrator.do_tarfile_calibration(tarname)
+    calibrator.do_save()
 
     print(calibrator.ost())
 
-    if upload: 
+    if upload:
         info = calibrator.as_message()
         if mono:
             set_camera_info_service = rospy.ServiceProxy("%s/set_camera_info" % rospy.remap_name("camera"), sensor_msgs.srv.SetCameraInfo)
@@ -103,8 +104,7 @@ def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags 
                 raise RuntimeError("connected to set_camera_info service, but failed setting camera_info")
 
     if visualize:
-
-        #Show rectified images
+        # Show rectified images
         calibrator.set_alpha(alpha)
 
         archive = tarfile.open(tarname, 'r')
@@ -113,63 +113,63 @@ def cal_from_tarfile(boards, tarname, mono = False, upload = False, calib_flags 
                 if f.startswith('left') and (f.endswith('.pgm') or f.endswith('png')):
                     filedata = archive.extractfile(f).read()
                     file_bytes = numpy.asarray(bytearray(filedata), dtype=numpy.uint8)
-                    im=cv2.imdecode(file_bytes,cv2.CV_LOAD_IMAGE_COLOR)
+                    im = cv2.imdecode(file_bytes, cv2.CV_LOAD_IMAGE_COLOR)
 
                     bridge = cv_bridge.CvBridge()
                     try:
-                        msg=bridge.cv2_to_imgmsg(im, "bgr8")
+                        msg = bridge.cv2_to_imgmsg(im, "bgr8")
                     except cv_bridge.CvBridgeError as e:
                         print(e)
 
-                    #handle msg returns the recitifed image with corner detection once camera is calibrated.
-                    drawable=calibrator.handle_msg(msg)
-                    vis=numpy.asarray( drawable.scrib[:,:])
-                    #Display. Name of window:f
+                    # handle msg returns the recitifed image with corner detection once camera is calibrated.
+                    drawable = calibrator.handle_msg(msg)
+                    vis = numpy.asarray(drawable.scrib[:, :])
+                    # Display. Name of window:f
                     display(f, vis)
         else:
-            limages = [ f for f in archive.getnames() if (f.startswith('left') and (f.endswith('pgm') or f.endswith('png'))) ]
+            limages = [f for f in archive.getnames() if (f.startswith('left') and (f.endswith('pgm') or f.endswith('png')))]
             limages.sort()
-            rimages = [ f for f in archive.getnames() if (f.startswith('right') and (f.endswith('pgm') or f.endswith('png'))) ]
+            rimages = [f for f in archive.getnames() if (f.startswith('right') and (f.endswith('pgm') or f.endswith('png')))]
             rimages.sort()
 
             if not len(limages) == len(rimages):
                 raise RuntimeError("Left, right images don't match. %d left images, %d right" % (len(limages), len(rimages)))
-            
+
             for i in range(len(limages)):
-                l=limages[i]
-                r=rimages[i]
+                l = limages[i]
+                r = rimages[i]
 
                 if l.startswith('left') and (l.endswith('.pgm') or l.endswith('png')) and r.startswith('right') and (r.endswith('.pgm') or r.endswith('png')):
                     # LEFT IMAGE
                     filedata = archive.extractfile(l).read()
                     file_bytes = numpy.asarray(bytearray(filedata), dtype=numpy.uint8)
-                    im_left=cv2.imdecode(file_bytes,cv2.CV_LOAD_IMAGE_COLOR)
-       
+                    im_left = cv2.imdecode(file_bytes, cv2.CV_LOAD_IMAGE_COLOR)
+
                     bridge = cv_bridge.CvBridge()
                     try:
-                        msg_left=bridge.cv2_to_imgmsg(im_left, "bgr8")
+                        msg_left = bridge.cv2_to_imgmsg(im_left, "bgr8")
                     except cv_bridge.CvBridgeError as e:
                         print(e)
 
-                    #RIGHT IMAGE
+                    # RIGHT IMAGE
                     filedata = archive.extractfile(r).read()
                     file_bytes = numpy.asarray(bytearray(filedata), dtype=numpy.uint8)
-                    im_right=cv2.imdecode(file_bytes,cv2.CV_LOAD_IMAGE_COLOR)
+                    im_right = cv2.imdecode(file_bytes, cv2.CV_LOAD_IMAGE_COLOR)
                     try:
-                        msg_right=bridge.cv2_to_imgmsg(im_right, "bgr8")
+                        msg_right = bridge.cv2_to_imgmsg(im_right, "bgr8")
                     except cv_bridge.CvBridgeError as e:
                         print(e)
 
-                    drawable=calibrator.handle_msg([ msg_left,msg_right] )
+                    drawable = calibrator.handle_msg([msg_left, msg_right])
 
-                    hl, wl = numpy.asarray(drawable.lscrib[:,:]).shape[:2]
-                    hr, wr = numpy.asarray(drawable.rscrib[:,:]).shape[:2]
+                    hl, wl = numpy.asarray(drawable.lscrib[:, :]).shape[:2]
+                    hr, wr = numpy.asarray(drawable.rscrib[:, :]).shape[:2]
                     h, w = (max(hl, hr), wl+wr)
                     vis = numpy.zeros((h, w, 3), numpy.uint8)
-                    vis[0:hl, 0:wl ,:] = numpy.asarray(drawable.lscrib[:,:])
-                    vis[:hr, wl:w, :] = numpy.asarray(drawable.rscrib[:,:])
-                    
-                    display(l+" "+r,vis)    
+                    vis[0:hl, 0:wl, :] = numpy.asarray(drawable.lscrib[:, :])
+                    vis[:hr, wl:w, :] = numpy.asarray(drawable.rscrib[:, :])
+
+                    display(l+" "+r, vis)
 
 
 if __name__ == '__main__':
