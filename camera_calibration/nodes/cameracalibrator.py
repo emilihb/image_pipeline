@@ -364,9 +364,9 @@ class OpenCVCalibrationNode(CalibrationNode):
         if not self.c.calibrated:
             if drawable.params:
                 for i, (label, lo, hi, progress) in enumerate(drawable.params):
-                    (w,_) = self.getTextSize(label)
+                    (w, _) = self.getTextSize(label)
                     self.putText(display, label, (width + (100 - w) / 2, self.y(i)))
-                    color = (0, 255,0)
+                    color = (0, 255, 0)
                     if progress < 1.0:
                         color = (0, int(progress*255.), 255)
                     cv2.line(display,
@@ -410,8 +410,7 @@ def main():
     group.add_option("--img-size",         
                     type="string", default="640x480",
                     help="minimum image size as NxM for calibartion (default 640x480)")
-    group.add_option("--extrinsics-only",
-                    action="store_true", default=False,
+    group.add_option("--extrinsics-only", action="store_true", default=False,
                      help="force stereo extrinsics calibration only. Intrinsics for both cameras must be provided")
     parser.add_option_group(group)
 

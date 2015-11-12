@@ -297,6 +297,9 @@ class Calibrator(object):
         p_x = min(1.0, max(0.0, (numpy.mean(Xs) - border / 2) / (width  - border)))
         p_y = min(1.0, max(0.0, (numpy.mean(Ys) - border / 2) / (height - border)))
         p_size = math.sqrt(area / (width * height))
+
+        # skew = _get_skew(corners, board)
+        # params = [p_x, p_y, p_size, skew]
         if self.camera_info is None:
             skew = _get_skew(corners, board)
             params = [p_x, p_y, p_size, skew]
@@ -914,8 +917,8 @@ class StereoCalibrator(Calibrator):
         self.r = MonoCalibrator(*args, **rkwargs)
         self.image_ok = []
         self.idx = 0  # for image_ok
-        print "L: ", self.l.size
-        print "R: ", self.r.size
+        # print "L: ", self.l.size
+        # print "R: ", self.r.size
         # Collecting from two cameras in a horizontal stereo rig, can't get
         # full X range in the left camera.
         self.param_ranges[0] = 0.4
@@ -934,6 +937,7 @@ class StereoCalibrator(Calibrator):
         self.l.size = self.size
         self.r.size = (rimages[0].shape[1], rimages[0].shape[0])
         self.cal_fromcorners(goodcorners)
+        # self.cal_extrinsics(goodcorners)
         self.calibrated = True
 
     def collect_corners(self, limages, rimages):
@@ -941,9 +945,7 @@ class StereoCalibrator(Calibrator):
         For a sequence of left and right images, find pairs of images where both
         left and right have a chessboard, and return  their corners as a list of pairs.
         """
-
-        print "Collect corners!!!!!!!!!"
-
+        
         # Pick out (corners, board) tuples
         lcorners = [self.downsample_and_detect(i)[1:4:2] for i in limages]
         rcorners = [self.downsample_and_detect(i)[1:4:2] for i in rimages]
@@ -1033,7 +1035,7 @@ class StereoCalibrator(Calibrator):
         in calibrated image are valid) to 1 (zoomed out, all pixels in
         original image are in calibrated image).
         """
-        cv2.stereoRectify(
+        r = cv2.stereoRectify(
             self.l.intrinsics,
             self.l.distortion,
             self.r.intrinsics,
@@ -1047,6 +1049,9 @@ class StereoCalibrator(Calibrator):
             self.r.P,
             alpha=a)
 
+        # print "Result ", r
+        
+
         if self.l.camera_info is not None and self.r.camera_info is not None:
             self.l.R = numpy.reshape(numpy.asarray(self.l.camera_info.R, dtype=numpy.float64), (3, 3))
             self.l.P = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
@@ -1054,10 +1059,40 @@ class StereoCalibrator(Calibrator):
             self.r.P = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
             print("***Rectification maps: Fixing R and P from known intrinsics")
 
+        # print "Set alpha-sizes (L/R): ", self.l.size, self.r.size
         cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.l.size, cv2.CV_32FC1,
                                self.l.mapx, self.l.mapy)
         cv2.initUndistortRectifyMap(self.r.intrinsics, self.r.distortion, self.r.R, self.r.P, self.r.size, cv2.CV_32FC1,
                                self.r.mapx, self.r.mapy)
+
+    def cal_extrinsics(self, good):
+        print("***Cal Extrinsics")
+        tmp = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
+        self.l.intrinsics = tmp[:, 0:3]
+        tmp = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+        self.r.intrinsics = tmp[:, 0:3]
+        self.l.distortion = numpy.zeros((len(self.l.camera_info.D), 1), dtype=numpy.float64)
+        self.r.distortion = numpy.zeros((len(self.r.camera_info.D), 1), dtype=numpy.float64)
+        self.l.R = numpy.eye(3, dtype=numpy.float64)
+        self.l.P = numpy.zeros((3, 4), dtype=numpy.float64)
+        self.r.R = numpy.eye(3, dtype=numpy.float64)
+        self.r.P = numpy.zeros((3, 4), dtype=numpy.float64)
+        
+        lipts = [l for (l, _, _) in good]
+        ripts = [r for (_, r, _) in good]
+        boards = [b for (_, _, b) in good]
+
+        opts = self.mk_object_points(boards, True)
+        # opts = self.mk_object_points(ripts, True)
+
+        for o, l in zip(opts, lipts):
+            print "shapes: ", o.shape, l.shape
+
+            retval, rvec, tvec = cv2.solvePnP(o, l, self.l.intrinsics, self.l. distortion)
+            print "retval/ rvec/ tvec:", retval, rvec, tvec
+
+
+
 
     def as_message(self):
         """
