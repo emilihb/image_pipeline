@@ -600,6 +600,8 @@ class MonoCalibrator(Calibrator):
         if 'name' not in kwargs:
             kwargs['name'] = 'narrow_stereo/left'
         super(MonoCalibrator, self).__init__(*args, **kwargs)
+        self.image_ok = []
+        self.idx = 0  # for image_ok
 
     def cal(self, images):
         """
@@ -834,6 +836,8 @@ class MonoCalibrator(Calibrator):
                 if self.is_good_sample(params):
                     self.db.append((params, gray))
                     self.good_corners.append((corners, board))
+                    self.image_ok.append((self.idx, True))
+                    self.idx += 1
                     print(("*** Added sample %d, p_x = %.3f, p_y = %.3f, p_size = %.3f, skew = %.3f" % tuple([len(self.db)] + params)))
 
         rv = MonoDrawable()
