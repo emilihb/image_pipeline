@@ -176,10 +176,12 @@ class CalibrationNode:
         if self.c is None:
             if self._camera_name:
                 self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
-                                        checkerboard_flags=self._checkerboard_flags)
+                                        checkerboard_flags=self._checkerboard_flags,
+                                        min_img_size=self._min_img_size)
             else:
                 self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern,
-                                        checkerboard_flags=self.checkerboard_flags)
+                                        checkerboard_flags=self.checkerboard_flags,
+                                        min_img_size=self._min_img_size)
 
         # This should just call the MonoCalibrator
         drawable = self.c.handle_msg(msg)
