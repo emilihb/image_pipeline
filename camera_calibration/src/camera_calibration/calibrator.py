@@ -40,7 +40,7 @@ import cv2
 import cv_bridge
 import image_geometry
 import math
-import numpy.linalg
+import numpy as np
 import pickle
 import random
 import sensor_msgs.msg
@@ -118,7 +118,7 @@ def _get_skew(corners, board):
         """
         ab = a - b
         cb = c - b
-        return math.acos(numpy.dot(ab,cb) / (numpy.linalg.norm(ab) * numpy.linalg.norm(cb)))
+        return math.acos(np.dot(ab,cb) / (np.linalg.norm(ab) * np.linalg.norm(cb)))
 
     skew = min(1.0, 2. * abs((math.pi / 2.) - angle(up_left, up_right, down_right)))
     return skew
@@ -191,7 +191,7 @@ def _get_circles(img, board, pattern):
     flag = cv2.CALIB_CB_SYMMETRIC_GRID
     if pattern == Patterns.ACircles:
         flag = cv2.CALIB_CB_ASYMMETRIC_GRID
-    mono_arr = numpy.array(mono)
+    mono_arr = np.array(mono)
 
     params = cv2.SimpleBlobDetector_Params()
    
@@ -223,7 +223,17 @@ class Calibrator(object):
     """
     Base class for calibration system
     """
-    def __init__(self, boards, flags=0, pattern=Patterns.Chessboard, name='', checkerboard_flags=cv2.CALIB_CB_FAST_CHECK, min_img_size=(640, 480), camera_info=None):
+    def __init__(
+        self,
+        boards,
+        flags=0,
+        pattern=Patterns.Chessboard,
+        name='',
+        checkerboard_flags=cv2.CALIB_CB_FAST_CHECK,
+        min_img_size=(640, 480),
+        camera_info=None,
+        center_principal_point=False,
+        auto_alpha=False):
         # Ordering the dimensions for the different detectors is actually a minefield...
         if pattern == Patterns.Chessboard:
             # Make sure n_cols > n_rows to agree with OpenCV CB detector output
@@ -261,6 +271,9 @@ class Calibrator(object):
         self.rvecs = []
         self.tvecs = []
 
+        self.center_principal_point = center_principal_point
+        self.auto_alpha = auto_alpha
+
     def mkgray(self, msg):
         """
         Convert a message into a 8-bit 1 channel monochrome OpenCV image
@@ -268,7 +281,7 @@ class Calibrator(object):
         # as cv_bridge automatically scales, we need to remove that behavior
         if msg.encoding.endswith('16'):
             mono16 = self.br.imgmsg_to_cv2(msg, "mono16")
-            mono8 = mono16.astype(numpy.uint8)
+            mono8 = mono16.astype(np.uint8)
             return mono8
         elif 'FC1' in msg.encoding:
             # floating point image handling
@@ -294,8 +307,8 @@ class Calibrator(object):
         border = math.sqrt(area)
         # For X and Y, we "shrink" the image all around by approx. half the board size.
         # Otherwise large boards are penalized because you can't get much X/Y variation.
-        p_x = min(1.0, max(0.0, (numpy.mean(Xs) - border / 2) / (width  - border)))
-        p_y = min(1.0, max(0.0, (numpy.mean(Ys) - border / 2) / (height - border)))
+        p_x = min(1.0, max(0.0, (np.mean(Xs) - border / 2) / (width  - border)))
+        p_y = min(1.0, max(0.0, (np.mean(Ys) - border / 2) / (height - border)))
         p_size = math.sqrt(area / (width * height))
 
         # skew = _get_skew(corners, board)
@@ -351,7 +364,7 @@ class Calibrator(object):
         opts = []
         for i, b in enumerate(boards):
             num_pts = b.n_cols * b.n_rows
-            opts_loc = numpy.zeros((num_pts, 1, 3), numpy.float32)
+            opts_loc = np.zeros((num_pts, 1, 3), np.float32)
             for j in range(num_pts):
                 opts_loc[j, 0, 0] = (j / b.n_cols)
                 if self.pattern == Patterns.ACircles:
@@ -437,13 +450,12 @@ class Calibrator(object):
             if ok:
                 if scale != 1.0:
                     downsampled_corners = corners.copy()
-                    downsampled_corners[:,:,0] /= x_scale
-                    downsampled_corners[:,:,1] /= y_scale
+                    downsampled_corners[:, :, 0] /= x_scale
+                    downsampled_corners[:, :, 1] /= y_scale
                 else:
                     downsampled_corners = corners
 
         return (scrib, corners, downsampled_corners, board, (x_scale, y_scale))
-
 
     def lrmsg(self, d, k, r, p):
         """ Used by :meth:`as_message`.  Return a CameraInfo message for the given calibration matrices """
@@ -453,35 +465,37 @@ class Calibrator(object):
             msg.distortion_model = "rational_polynomial"
         else:
             msg.distortion_model = "plumb_bob"
-        msg.D = numpy.ravel(d).copy().tolist()
-        msg.K = numpy.ravel(k).copy().tolist()
-        msg.R = numpy.ravel(r).copy().tolist()
-        msg.P = numpy.ravel(p).copy().tolist()
+        msg.D = np.ravel(d).copy().tolist()
+        msg.K = np.ravel(k).copy().tolist()
+        msg.R = np.ravel(r).copy().tolist()
+        msg.P = np.ravel(p).copy().tolist()
         return msg
 
-    def lrreport(self, d, k, r, p):
-        print("D = ", numpy.ravel(d).tolist())
-        print("K = ", numpy.ravel(k).tolist())
-        print("R = ", numpy.ravel(r).tolist())
-        print("P = ", numpy.ravel(p).tolist())
+    def lrreport(self, d, k, r, p, alpha):
+        print("D = ", np.ravel(d).tolist())
+        print("K = ", np.ravel(k).tolist())
+        print("R = ", np.ravel(r).tolist())
+        print("P = ", np.ravel(p).tolist())
+        print("alpha =", alpha)
 
-    def lrreport_verbose(self, name, image_ok, d, k, r, p, sz, error, rvecs, tvecs, img_error=None):
+    def lrreport_verbose(self, name, image_ok, d, k, r, p, sz, error, rvecs, tvecs, alpha, error_image=None):
         names = [str(name) + "-%04d.png" % i for (i, ok) in image_ok if ok]
         data = dict(
-            D=numpy.ravel(d).tolist(),
-            K=numpy.ravel(k).tolist(),
-            R=numpy.ravel(r).tolist(),
-            P=numpy.ravel(p).tolist(),
+            D=np.ravel(d).tolist(),
+            K=np.ravel(k).tolist(),
+            R=np.ravel(r).tolist(),
+            P=np.ravel(p).tolist(),
             reprojection_error=error,
             num_collected_images=len(image_ok),
             num_good_images=len(names),
             image_width=sz[1],
-            image_height=sz[0])
+            image_height=sz[0],
+            alpha=alpha)
 
-        if img_error is None:
-            img_error = [numpy.nan] * len(rvecs)
+        if error_image is None:
+            error_image = [np.nan] * len(rvecs)
 
-        for n, r, t, e in zip(names, rvecs, tvecs, img_error):
+        for n, r, t, e in zip(names, rvecs, tvecs, error_image):
             data[str(n)] = dict(rvec=r, tvec=t, reprojection_error=float(e))
 
         return data
@@ -547,14 +561,14 @@ class Calibrator(object):
         tf.close()
         print(("Wrote calibration data to", filename))
 
+
 def image_from_archive(archive, name):
     """
-    Load image PGM file from tar archive. 
-
+    Load image PGM file from tar archive.
     Used for tarfile loading and unit test.
     """
     member = archive.getmember(name)
-    imagefiledata = numpy.fromstring(archive.extractfile(member).read(-1), numpy.uint8)
+    imagefiledata = np.fromstring(archive.extractfile(member).read(-1), np.uint8)
     imagefiledata.resize((1, imagefiledata.size))
     return cv2.imdecode(imagefiledata, cv2.IMREAD_COLOR)
 
@@ -640,11 +654,11 @@ class MonoCalibrator(Calibrator):
         ipts = [points for (points, _) in good]
         opts = self.mk_object_points(boards)
 
-        self.intrinsics = numpy.zeros((3, 3), numpy.float64)
+        self.intrinsics = np.zeros((3, 3), np.float64)
         if self.calib_flags & cv2.CALIB_RATIONAL_MODEL:
-            self.distortion = numpy.zeros((8, 1), numpy.float64)  # rational polynomial
+            self.distortion = np.zeros((8, 1), np.float64)  # rational polynomial
         else:
-            self.distortion = numpy.zeros((5, 1), numpy.float64)  # plumb bob
+            self.distortion = np.zeros((5, 1), np.float64)  # plumb bob
         # If FIX_ASPECT_RATIO flag set, enforce focal lengths have 1/1 ratio
         self.intrinsics[0, 0] = 1.0
         self.intrinsics[1, 1] = 1.0
@@ -655,11 +669,39 @@ class MonoCalibrator(Calibrator):
             flags=self.calib_flags)
 
         # R is identity matrix for monocular calibration
-        self.R = numpy.eye(3, dtype=numpy.float64)
-        self.P = numpy.zeros((3, 4), dtype=numpy.float64)
+        self.R = np.eye(3, dtype=np.float64)
+        self.P = np.zeros((3, 4), dtype=np.float64)
 
-        self.set_alpha(0.0)
+        self.alpha = 0.
+        if self.auto_alpha:
+            self.alpha = self.find_alpha()
+        self.set_alpha(self.alpha)
+
         self.img_reprojection_error, _ = self.compute_reprojection_error(opts, ipts)
+
+    def find_alpha(self, alpha=0., step=-0.01):
+        """ Finds minimum alpha that gives no black boders"""
+        white = np.ones(self.size, dtype=np.uint8) * 255
+
+        stop = False
+        while not stop and (alpha < 1. and alpha > -1.):
+            ncm, _ = cv2.getOptimalNewCameraMatrix(self.intrinsics, self.distortion, self.size, alpha, self.size, self.center_principal_point)
+            mapx, mapy = cv2.initUndistortRectifyMap(self.intrinsics, self.distortion, self.R, ncm, self.size, cv2.CV_32FC1)
+
+            # xy order might be an issue
+            dst = cv2.remap(white, mapy, mapx, cv2.INTER_LINEAR)
+            non_white = np.sum(
+                np.r_[dst[0], dst[-1], dst[:, 0], dst[:, -1]] != 255)
+
+            if non_white == 0:
+                stop = True
+            else:
+                alpha = alpha + step
+
+        if alpha < -1. or alpha > 1.:
+            raise RuntimeError("OpenCV free scaling out of limits (alpha %f)" % alpha)
+
+        return alpha
 
     def set_alpha(self, a):
         """
@@ -668,11 +710,10 @@ class MonoCalibrator(Calibrator):
         calibrated image are valid) to 1 (zoomed out, all pixels in
         original image are in calibrated image).
         """
-
         # NOTE: Prior to Electric, this code was broken such that we never actually saved the new
         # camera matrix. In effect, this enforced P = [K|0] for monocular cameras.
         # TODO: Verify that OpenCV #1199 gets applied (improved GetOptimalNewCameraMatrix)
-        ncm, _ = cv2.getOptimalNewCameraMatrix(self.intrinsics, self.distortion, self.size, a)
+        ncm, _ = cv2.getOptimalNewCameraMatrix(self.intrinsics, self.distortion, self.size, a, self.size, self.center_principal_point)
         for j in range(3):
             for i in range(3):
                 self.P[j, i] = ncm[j, i]
@@ -704,15 +745,15 @@ class MonoCalibrator(Calibrator):
         """ Initialize the camera calibration from a CameraInfo message """
 
         self.size = (msg.width, msg.height)
-        self.intrinsics = numpy.array(msg.K, dtype=numpy.float64, copy=True).reshape((3, 3))
-        self.distortion = numpy.array(msg.D, dtype=numpy.float64, copy=True).reshape((len(msg.D), 1))
-        self.R = numpy.array(msg.R, dtype=numpy.float64, copy=True).reshape((3, 3))
-        self.P = numpy.array(msg.P, dtype=numpy.float64, copy=True).reshape((3, 4))
+        self.intrinsics = np.array(msg.K, dtype=np.float64, copy=True).reshape((3, 3))
+        self.distortion = np.array(msg.D, dtype=np.float64, copy=True).reshape((len(msg.D), 1))
+        self.R = np.array(msg.R, dtype=np.float64, copy=True).reshape((3, 3))
+        self.P = np.array(msg.P, dtype=np.float64, copy=True).reshape((3, 4))
 
         self.set_alpha(0.0)
 
     def report(self):
-        self.lrreport(self.distortion, self.intrinsics, self.R, self.P)
+        self.lrreport(self.distortion, self.intrinsics, self.R, self.P, self.alpha)
 
     def ost(self):
         return self.lrost(self.name, self.distortion, self.intrinsics, self.R, self.P, self.size)
@@ -723,8 +764,20 @@ class MonoCalibrator(Calibrator):
     def report_verbose(self):
         rvecs = [i.ravel().tolist() for i in self.rvecs]
         tvecs = [i.ravel().tolist() for i in self.tvecs]
-        d = self.lrreport_verbose("left", self.image_ok, self.distortion, self.intrinsics, self.R, self.P, self.size,
-            self.reprojection_error, rvecs, tvecs, self.img_reprojection_error)
+
+        d = self.lrreport_verbose(
+            name="left",
+            image_ok=self.image_ok,
+            d=self.distortion,
+            k=self.intrinsics,
+            r=self.R,
+            p=self.P,
+            sz=self.size,
+            error=self.reprojection_error,
+            rvecs=rvecs,
+            tvecs=tvecs,
+            alpha=self.alpha,
+            error_image=self.img_reprojection_error)
         return yaml.dump(d)
 
     def linear_error_from_image(self, image):
@@ -754,13 +807,13 @@ class MonoCalibrator(Calibrator):
         total_points = 0
         for img, obj, r, t in zip(img_pts, obj_pts, self.rvecs, self.tvecs):
             reprojected_points, _ = cv2.projectPoints(obj, r, t, self.intrinsics, self.distortion)
-            norm = numpy.sum(numpy.abs(img - reprojected_points)**2)
-            err = numpy.sqrt(norm / len(obj))
+            norm = np.sum(np.abs(img - reprojected_points)**2)
+            err = np.sqrt(norm / len(obj))
             img_error.append(err)
             total_error += norm
             total_points += len(obj)
-        mean_error = numpy.sqrt(total_error / total_points)
-        return numpy.asarray(img_error), mean_error
+        mean_error = np.sqrt(total_error / total_points)
+        return np.asarray(img_error), mean_error
 
     @staticmethod
     def linear_error(corners, b):
@@ -949,7 +1002,6 @@ class StereoCalibrator(Calibrator):
         For a sequence of left and right images, find pairs of images where both
         left and right have a chessboard, and return  their corners as a list of pairs.
         """
-        
         # Pick out (corners, board) tuples
         lcorners = [self.downsample_and_detect(i)[1:4:2] for i in limages]
         rcorners = [self.downsample_and_detect(i)[1:4:2] for i in rimages]
@@ -971,16 +1023,16 @@ class StereoCalibrator(Calibrator):
     def cal_fromcorners(self, good):
         if self.l.camera_info is not None and self.r.camera_info is not None:
             print("***Known intrinsics: Fixing K and setting D=0")
-            tmp = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
+            tmp = np.reshape(np.asarray(self.l.camera_info.P, dtype=np.float64), (3, 4))
             self.l.intrinsics = tmp[:, 0:3]
-            tmp = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+            tmp = np.reshape(np.asarray(self.r.camera_info.P, dtype=np.float64), (3, 4))
             self.r.intrinsics = tmp[:, 0:3]
-            self.l.distortion = numpy.zeros((len(self.l.camera_info.D), 1), dtype=numpy.float64)
-            self.r.distortion = numpy.zeros((len(self.r.camera_info.D), 1), dtype=numpy.float64)
-            self.l.R = numpy.eye(3, dtype=numpy.float64)
-            self.l.P = numpy.zeros((3, 4), dtype=numpy.float64)
-            self.r.R = numpy.eye(3, dtype=numpy.float64)
-            self.r.P = numpy.zeros((3, 4), dtype=numpy.float64)
+            self.l.distortion = np.zeros((len(self.l.camera_info.D), 1), dtype=np.float64)
+            self.r.distortion = np.zeros((len(self.r.camera_info.D), 1), dtype=np.float64)
+            self.l.R = np.eye(3, dtype=np.float64)
+            self.l.P = np.zeros((3, 4), dtype=np.float64)
+            self.r.R = np.eye(3, dtype=np.float64)
+            self.r.P = np.zeros((3, 4), dtype=np.float64)
             self.l.set_alpha(0.0)
             self.r.set_alpha(0.0)
         else:  # Perform monocular calibrations
@@ -1003,8 +1055,8 @@ class StereoCalibrator(Calibrator):
         flags |= cv2.CALIB_FIX_K2
         flags |= cv2.CALIB_FIX_K1
 
-        self.T = numpy.zeros((3, 1), dtype=numpy.float64)
-        self.R = numpy.eye(3, dtype=numpy.float64)
+        self.T = np.zeros((3, 1), dtype=np.float64)
+        self.R = np.eye(3, dtype=np.float64)
 
         self.reprojection_error, _, _, _, _, _, _, _, _ = cv2.stereoCalibrate(
             opts,
@@ -1023,13 +1075,15 @@ class StereoCalibrator(Calibrator):
         print "Stereo Extrinsics:"
         print "Rotation Matrix:"
         print self.R
-        self.euler = numpy.array([
-            numpy.arctan2(self.R[2, 1], self.R[2, 2]),
-            numpy.arctan2(-self.R[2, 0], numpy.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
-            numpy.arctan2(self.R[1, 0], self.R[0, 0])])
-        print "Euler\n\trad: %s\n\tdeg: %s" % (numpy.array_str(self.euler), numpy.array_str(self.euler*180./numpy.pi))
-        print "T: %s" % (numpy.array_str(numpy.reshape(self.T, (-1,))))
+        self.euler = np.array([
+            np.arctan2(self.R[2, 1], self.R[2, 2]),
+            np.arctan2(-self.R[2, 0], np.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
+            np.arctan2(self.R[1, 0], self.R[0, 0])])
+        print "Euler\n\trad: %s\n\tdeg: %s" % (np.array_str(self.euler), np.array_str(self.euler*180./np.pi))
+        print "T: %s" % (np.array_str(np.reshape(self.T, (-1,))))
 
+        if self.l.auto_alpha:
+            print "Auto alpha not implemented yet for stereo"
         self.set_alpha(0.0)
 
     def set_alpha(self, a):
@@ -1057,10 +1111,10 @@ class StereoCalibrator(Calibrator):
         
 
         if self.l.camera_info is not None and self.r.camera_info is not None:
-            self.l.R = numpy.reshape(numpy.asarray(self.l.camera_info.R, dtype=numpy.float64), (3, 3))
-            self.l.P = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
-            self.r.R = numpy.reshape(numpy.asarray(self.r.camera_info.R, dtype=numpy.float64), (3, 3))
-            self.r.P = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+            self.l.R = np.reshape(np.asarray(self.l.camera_info.R, dtype=np.float64), (3, 3))
+            self.l.P = np.reshape(np.asarray(self.l.camera_info.P, dtype=np.float64), (3, 4))
+            self.r.R = np.reshape(np.asarray(self.r.camera_info.R, dtype=np.float64), (3, 3))
+            self.r.P = np.reshape(np.asarray(self.r.camera_info.P, dtype=np.float64), (3, 4))
             print("***Rectification maps: Fixing R and P from known intrinsics")
 
         # print "Set alpha-sizes (L/R): ", self.l.size, self.r.size
@@ -1071,16 +1125,16 @@ class StereoCalibrator(Calibrator):
 
     def cal_extrinsics(self, good):
         print("***Cal Extrinsics")
-        tmp = numpy.reshape(numpy.asarray(self.l.camera_info.P, dtype=numpy.float64), (3, 4))
+        tmp = np.reshape(np.asarray(self.l.camera_info.P, dtype=np.float64), (3, 4))
         self.l.intrinsics = tmp[:, 0:3]
-        tmp = numpy.reshape(numpy.asarray(self.r.camera_info.P, dtype=numpy.float64), (3, 4))
+        tmp = np.reshape(np.asarray(self.r.camera_info.P, dtype=np.float64), (3, 4))
         self.r.intrinsics = tmp[:, 0:3]
-        self.l.distortion = numpy.zeros((len(self.l.camera_info.D), 1), dtype=numpy.float64)
-        self.r.distortion = numpy.zeros((len(self.r.camera_info.D), 1), dtype=numpy.float64)
-        self.l.R = numpy.eye(3, dtype=numpy.float64)
-        self.l.P = numpy.zeros((3, 4), dtype=numpy.float64)
-        self.r.R = numpy.eye(3, dtype=numpy.float64)
-        self.r.P = numpy.zeros((3, 4), dtype=numpy.float64)
+        self.l.distortion = np.zeros((len(self.l.camera_info.D), 1), dtype=np.float64)
+        self.r.distortion = np.zeros((len(self.r.camera_info.D), 1), dtype=np.float64)
+        self.l.R = np.eye(3, dtype=np.float64)
+        self.l.P = np.zeros((3, 4), dtype=np.float64)
+        self.r.R = np.eye(3, dtype=np.float64)
+        self.r.P = np.zeros((3, 4), dtype=np.float64)
         
         lipts = [l for (l, _, _) in good]
         ripts = [r for (_, r, _) in good]
@@ -1111,8 +1165,8 @@ class StereoCalibrator(Calibrator):
         """ Initialize the camera calibration from a pair of CameraInfo messages.  """
         self.size = (msgs[0].width, msgs[0].height)
 
-        self.T = numpy.zeros((3, 1), dtype=numpy.float64)
-        self.R = numpy.eye(3, dtype=numpy.float64)
+        self.T = np.zeros((3, 1), dtype=np.float64)
+        self.R = np.eye(3, dtype=np.float64)
 
         self.l.from_message(msgs[0])
         self.r.from_message(msgs[1])
@@ -1125,8 +1179,8 @@ class StereoCalibrator(Calibrator):
         self.lrreport(self.l.distortion, self.l.intrinsics, self.l.R, self.l.P)
         print("\nRight:")
         self.lrreport(self.r.distortion, self.r.intrinsics, self.r.R, self.r.P)
-        print("self.T ", numpy.ravel(self.T).tolist())
-        print("self.R ", numpy.ravel(self.R).tolist())
+        print("self.T ", np.ravel(self.T).tolist())
+        print("self.R ", np.ravel(self.R).tolist())
 
     def ost(self):
         return (
@@ -1139,7 +1193,7 @@ class StereoCalibrator(Calibrator):
             self.lryaml(self.name + "/right", self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size))
 
     def report_verbose(self):
-        deg = self.euler*180/numpy.pi
+        deg = self.euler*180/np.pi
         e = dict(rotation_matrix=self.R.ravel().tolist(), translation=self.T.ravel().tolist(), euler_rad=self.euler.tolist(), euler_deg=deg.tolist())
         if self.l.camera_info is not None and self.r.camera_info is not None:
             self.l.img_reprojection_error = None
@@ -1148,10 +1202,32 @@ class StereoCalibrator(Calibrator):
         ltvecs = [i.ravel().tolist() for i in self.l.tvecs]
         rrvecs = [i.ravel().tolist() for i in self.r.rvecs]
         rtvecs = [i.ravel().tolist() for i in self.r.tvecs]
-        l = self.l.lrreport_verbose("left", self.image_ok, self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.size,
-            self.l.reprojection_error, lrvecs, ltvecs, self.l.img_reprojection_error)
-        r = self.r.lrreport_verbose("right", self.image_ok, self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.size,
-            self.r.reprojection_error, rrvecs, rtvecs, self.r.img_reprojection_error)
+        l = self.l.lrreport_verbose(
+            name="left",
+            image_ok=self.image_ok,
+            d=self.l.distortion,
+            k=self.l.intrinsics,
+            r=self.l.R,
+            p=self.l.P,
+            sz=self.l.size,
+            error=self.l.reprojection_error,
+            rvecs=lrvecs,
+            tvecs=ltvecs,
+            alpha=self.l.alpha,
+            error_image=self.l.img_reprojection_error)
+        r = self.r.lrreport_verbose(
+            name="right",
+            image_ok=self.image_ok,
+            d=self.r.distortion,
+            k=self.r.intrinsics,
+            r=self.r.R,
+            p=self.r.P,
+            sz=self.r.size,
+            error=self.r.reprojection_error,
+            rvecs=rrvecs,
+            tvecs=rtvecs,
+            alpha=self.l.alpha,
+            error_image=self.r.img_reprojection_error)
         report = dict(global_reprojection_error=self.reprojection_error, extrinsics=e, left=l, right=r)
         return yaml.dump(report)
 
@@ -1177,7 +1253,7 @@ class StereoCalibrator(Calibrator):
         Compute the epipolar error from two sets of matching undistorted points
         """
         d = lcorners[:,:,1] - rcorners[:,:,1]
-        return numpy.sqrt(numpy.square(d).sum() / d.size)
+        return np.sqrt(np.square(d).sum() / d.size)
 
     def chessboard_size_from_images(self, limage, rimage):
         _, lcorners, _, board, _ = self.downsample_and_detect(limage)
