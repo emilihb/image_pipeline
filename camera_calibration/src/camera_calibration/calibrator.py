@@ -1057,6 +1057,8 @@ class StereoCalibrator(Calibrator):
 
         self.T = np.zeros((3, 1), dtype=np.float64)
         self.R = np.eye(3, dtype=np.float64)
+        self.E = np.eye(3, dtype=np.float64)
+        self.F = np.eye(3, dtype=np.float64)
 
         self.reprojection_error, _, _, _, _, _, _, _, _ = cv2.stereoCalibrate(
             opts,
@@ -1069,6 +1071,8 @@ class StereoCalibrator(Calibrator):
             self.r.distortion,
             self.R,
             self.T,
+            self.E,
+            self.F,
             criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 1, 1e-5),
             flags=flags)
 
@@ -1081,6 +1085,10 @@ class StereoCalibrator(Calibrator):
             np.arctan2(self.R[1, 0], self.R[0, 0])])
         print "Euler\n\trad: %s\n\tdeg: %s" % (np.array_str(self.euler), np.array_str(self.euler*180./np.pi))
         print "T: %s" % (np.array_str(np.reshape(self.T, (-1,))))
+        print "Essential Matrix:"
+        print self.E
+        print "Fundamental Matrix:"
+        print self.F
 
         if self.l.auto_alpha:
             print "Auto alpha not implemented yet for stereo"
@@ -1176,9 +1184,9 @@ class StereoCalibrator(Calibrator):
 
     def report(self):
         print("\nLeft:")
-        self.lrreport(self.l.distortion, self.l.intrinsics, self.l.R, self.l.P)
+        self.lrreport(self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.alpha)
         print("\nRight:")
-        self.lrreport(self.r.distortion, self.r.intrinsics, self.r.R, self.r.P)
+        self.lrreport(self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.alpha)
         print("self.T ", np.ravel(self.T).tolist())
         print("self.R ", np.ravel(self.R).tolist())
 

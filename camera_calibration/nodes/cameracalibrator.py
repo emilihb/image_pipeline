@@ -56,7 +56,7 @@ class DisplayThread(threading.Thread):
     """
     Thread that displays the current images
     It is its own thread so that all display can be done
-    in one thread to overcome imshow limitations and 
+    in one thread to overcome imshow limitations and
     https://github.com/ros-perception/image_pipeline/issues/85
     """
     def __init__(self, queue, opencv_calibration_node):
@@ -80,6 +80,7 @@ class DisplayThread(threading.Thread):
             elif k == ord('s'):
                 self.opencv_calibration_node.screendump(im)
 
+
 class ConsumerThread(threading.Thread):
     def __init__(self, queue, function):
         threading.Thread.__init__(self)
@@ -95,10 +96,20 @@ class ConsumerThread(threading.Thread):
 
 
 class CalibrationNode:
-    def __init__(self, boards, service_check=True, synchronizer=message_filters.TimeSynchronizer, flags=0,
-                 pattern=Patterns.Chessboard, camera_name='', checkerboard_flags=0,
-                 min_img_size=(640, 480),
-                 extrinsics_only=False):
+    def __init__(
+        self,
+        boards,
+        service_check=True,
+        synchronizer=message_filters.TimeSynchronizer,
+        flags=0,
+        pattern=Patterns.Chessboard,
+        camera_name='',
+        checkerboard_flags=0,
+        min_img_size=(640, 480),
+        extrinsics_only=False,
+        center_principal_point=False,
+        auto_alpha=False):
+
         if service_check:
             # assume any non-default service names have been set.  Wait for the service to become ready
             for svcname in ["camera", "left_camera", "right_camera"]:
@@ -119,6 +130,9 @@ class CalibrationNode:
         self._pattern = pattern
         self._camera_name = camera_name
         self._min_img_size = min_img_size
+        self._center_principal_point = center_principal_point
+        self._auto_alpha = auto_alpha
+
         lsub = message_filters.Subscriber('left', sensor_msgs.msg.Image)
         rsub = message_filters.Subscriber('right', sensor_msgs.msg.Image)
         ts = synchronizer([lsub, rsub], 4)
@@ -126,7 +140,7 @@ class CalibrationNode:
 
         msub = message_filters.Subscriber('image', sensor_msgs.msg.Image)
         msub.registerCallback(self.queue_monocular)
-        
+
         self.set_camera_info_service = rospy.ServiceProxy("%s/set_camera_info" % rospy.remap_name("camera"),
                                                           sensor_msgs.srv.SetCameraInfo)
         self.set_left_camera_info_service = rospy.ServiceProxy("%s/set_camera_info" % rospy.remap_name("left_camera"),
@@ -173,15 +187,26 @@ class CalibrationNode:
         self.rinfo_sub.unregister()
 
     def handle_monocular(self, msg):
+        # if self.c is None:
+        #     if not self._camera_name:
+
+        #         self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
+        #                                 checkerboard_flags=self._checkerboard_flags,
+        #                                 min_img_size=self._min_img_size)
+        #     else:
+        #         self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern,
+        #                                 checkerboard_flags=self.checkerboard_flags,
+        #                                 min_img_size=self._min_img_size)
         if self.c is None:
-            if self._camera_name:
-                self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
-                                        checkerboard_flags=self._checkerboard_flags,
-                                        min_img_size=self._min_img_size)
-            else:
-                self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern,
-                                        checkerboard_flags=self.checkerboard_flags,
-                                        min_img_size=self._min_img_size)
+            self.c = MonoCalibrator(
+                self._boards,
+                self._calib_flags,
+                self._pattern,
+                name=self._camera_name,
+                checkerboard_flags=self._checkerboard_flags,
+                min_img_size=self._min_img_size,
+                center_principal_point=self._center_principal_point,
+                auto_alpha=self._auto_alpha)
 
         # This should just call the MonoCalibrator
         drawable = self.c.handle_msg(msg)
@@ -191,6 +216,7 @@ class CalibrationNode:
     def handle_stereo(self, msg):
         if self.c is None:
             if self._camera_name:
+
                 self.c = StereoCalibrator(
                     self._boards,
                     self._calib_flags,
@@ -207,12 +233,21 @@ class CalibrationNode:
                     checkerboard_flags=self._checkerboard_flags,
                     min_img_size=self._min_img_size,
                     camera_info=(self._left_camera_info, self._right_camera_info))
-
+        # if self.c is None:
+        #     self.c = StereoCalibrator(
+        #                 self._boards,
+        #                 self._calib_flags,
+        #                 self._pattern,
+        #                 name=self._camera_name,
+        #                 checkerboard_flags=self._checkerboard_flags,
+        #                 min_img_size=self._min_img_size,
+        #                 camera_info=(self._left_camera_info, self._right_camera_info),
+        #                 center_principal_point=self._center_principal_point,
+        #                 auto_alpha=self._auto_alpha)
         drawable = self.c.handle_msg(msg)
         self.displaywidth = drawable.lscrib.shape[1] + drawable.rscrib.shape[1]
         self.redraw_stereo(drawable)
-            
- 
+
     def check_set_camera_info(self, response):
         if response.success:
             return True
@@ -424,6 +459,7 @@ def main():
                      action="store_false", dest="service_check", default=True,
                      help="disable check for set_camera_info services at startup")
     parser.add_option_group(group)
+
     group = OptionGroup(parser, "Calibration Optimizer Options")
     group.add_option("--fix-principal-point",
                      action="store_true", default=False,
@@ -440,6 +476,14 @@ def main():
     group.add_option("--disable_calib_cb_fast_check", action='store_true', default=False,
                      help="uses the CALIB_CB_FAST_CHECK flag for findChessboardCorners")
     parser.add_option_group(group)
+
+    group = OptionGroup(parser, "Calibration Free Scaling Options")
+    group.add_option("--center-principal-point",
+                     action="store_true", default=False,
+                     help="new camera materix principal point at the image center")
+    group.add_option("--auto-alpha",
+                     action="store_true", default=False,
+                     help="find minimum alpha with no back borders")
 
     options, args = parser.parse_args()
 
@@ -500,10 +544,18 @@ def main():
         checkerboard_flags = cv2.CALIB_CB_FAST_CHECK
 
     rospy.init_node('cameracalibrator')
-    node = OpenCVCalibrationNode(boards, options.service_check, sync, calib_flags, pattern, options.camera_name,
-                                 checkerboard_flags=checkerboard_flags,
-                                 min_img_size=img_size,
-                                 extrinsics_only=options.extrinsics_only)
+    node = OpenCVCalibrationNode(
+        boards,
+        options.service_check,
+        sync,
+        calib_flags,
+        pattern,
+        options.camera_name,
+        checkerboard_flags=checkerboard_flags,
+        min_img_size=img_size,
+        extrinsics_only=options.extrinsics_only,
+        center_principal_point=options.center_principal_point,
+        auto_alpha=options.auto_alpha)
     rospy.spin()
 
 if __name__ == "__main__":
