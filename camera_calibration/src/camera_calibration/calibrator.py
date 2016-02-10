@@ -64,10 +64,11 @@ class CalibrationException(Exception):
 
 # TODO: Make pattern per-board?
 class ChessboardInfo(object):
-    def __init__(self, n_cols = 0, n_rows = 0, dim = 0.0):
+    def __init__(self, n_cols=0, n_rows=0, dim=0.0, detector=None):
         self.n_cols = n_cols
         self.n_rows = n_rows
         self.dim = dim
+        self._detector = detector
 
 # Make all private!!!!!
 def lmin(seq1, seq2):
@@ -183,37 +184,23 @@ def _get_circles(img, board, pattern):
     """
     h = img.shape[0]
     w = img.shape[1]
+
+    mono = img
     if len(img.shape) == 3 and img.shape[2] == 3:
         mono = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    else:
-        mono = img
 
     flag = cv2.CALIB_CB_SYMMETRIC_GRID
     if pattern == Patterns.ACircles:
         flag = cv2.CALIB_CB_ASYMMETRIC_GRID
     mono_arr = np.array(mono)
 
-    params = cv2.SimpleBlobDetector_Params()
-   
-    # # # Filter by Area.
-    params.filterByArea = True
-    # params.minArea = 10
-    params.maxArea = 10e4;
-    # Filter by Inertia
-    params.filterByInertia = True
-    params.minInertiaRatio = 0.001
-    params.filterByCircularity = False;
-
-    bd = cv2.SimpleBlobDetector(params)
-
-
-    (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_cols, board.n_rows), flags=flag, blobDetector=bd)
+    (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_cols, board.n_rows), flags=flag, blobDetector=board._detector)
 
     # In symmetric case, findCirclesGrid does not detect the target if it's turned sideways. So we try
     # again with dimensions swapped - not so efficient.
     # TODO Better to add as second board? Corner ordering will change.
     if not ok and pattern == Patterns.Circles:
-        (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_rows, board.n_cols), flags=flag)
+        (ok, corners) = cv2.findCirclesGrid(mono_arr, (board.n_rows, board.n_cols), flags=flag, blobDetector=board._detector)
 
     return (ok, corners)
 
@@ -237,10 +224,10 @@ class Calibrator(object):
         # Ordering the dimensions for the different detectors is actually a minefield...
         if pattern == Patterns.Chessboard:
             # Make sure n_cols > n_rows to agree with OpenCV CB detector output
-            self._boards = [ChessboardInfo(max(i.n_cols, i.n_rows), min(i.n_cols, i.n_rows), i.dim) for i in boards]
+            self._boards = [ChessboardInfo(max(i.n_cols, i.n_rows), min(i.n_cols, i.n_rows), i.dim, i._detector) for i in boards]
         elif pattern == Patterns.ACircles:
             # 7x4 and 4x7 are actually different patterns. Assume square-ish pattern, so n_rows > n_cols.
-            self._boards = [ChessboardInfo(min(i.n_cols, i.n_rows), max(i.n_cols, i.n_rows), i.dim) for i in boards]
+            self._boards = [ChessboardInfo(min(i.n_cols, i.n_rows), max(i.n_cols, i.n_rows), i.dim, i._detector) for i in boards]
         elif pattern == Patterns.Circles:
             # We end up having to check both ways anyway
             self._boards = boards
@@ -843,7 +830,6 @@ class MonoCalibrator(Calibrator):
         else:
             return None
 
-
     def handle_msg(self, msg):
         """
         Detects the calibration target and, if found and provides enough new information,
@@ -1048,12 +1034,6 @@ class StereoCalibrator(Calibrator):
         opts = self.mk_object_points(boards, True)
 
         flags = cv2.CALIB_FIX_INTRINSIC
-        flags |= cv2.CALIB_FIX_K6
-        flags |= cv2.CALIB_FIX_K5
-        flags |= cv2.CALIB_FIX_K4
-        flags |= cv2.CALIB_FIX_K3
-        flags |= cv2.CALIB_FIX_K2
-        flags |= cv2.CALIB_FIX_K1
 
         self.T = np.zeros((3, 1), dtype=np.float64)
         self.R = np.eye(3, dtype=np.float64)
@@ -1115,9 +1095,6 @@ class StereoCalibrator(Calibrator):
             self.r.P,
             alpha=a)
 
-        # print "Result ", r
-        
-
         if self.l.camera_info is not None and self.r.camera_info is not None:
             self.l.R = np.reshape(np.asarray(self.l.camera_info.R, dtype=np.float64), (3, 3))
             self.l.P = np.reshape(np.asarray(self.l.camera_info.P, dtype=np.float64), (3, 4))
@@ -1126,10 +1103,24 @@ class StereoCalibrator(Calibrator):
             print("***Rectification maps: Fixing R and P from known intrinsics")
 
         # print "Set alpha-sizes (L/R): ", self.l.size, self.r.size
-        cv2.initUndistortRectifyMap(self.l.intrinsics, self.l.distortion, self.l.R, self.l.P, self.l.size, cv2.CV_32FC1,
-                               self.l.mapx, self.l.mapy)
-        cv2.initUndistortRectifyMap(self.r.intrinsics, self.r.distortion, self.r.R, self.r.P, self.r.size, cv2.CV_32FC1,
-                               self.r.mapx, self.r.mapy)
+        cv2.initUndistortRectifyMap(
+            self.l.intrinsics,
+            self.l.distortion,
+            self.l.R,
+            self.l.P,
+            self.l.size,
+            cv2.CV_32FC1,
+            self.l.mapx,
+            self.l.mapy)
+        cv2.initUndistortRectifyMap(
+            self.r.intrinsics,
+            self.r.distortion,
+            self.r.R,
+            self.r.P,
+            self.r.size,
+            cv2.CV_32FC1,
+            self.r.mapx,
+            self.r.mapy)
 
     def cal_extrinsics(self, good):
         print("***Cal Extrinsics")
@@ -1143,7 +1134,7 @@ class StereoCalibrator(Calibrator):
         self.l.P = np.zeros((3, 4), dtype=np.float64)
         self.r.R = np.eye(3, dtype=np.float64)
         self.r.P = np.zeros((3, 4), dtype=np.float64)
-        
+
         lipts = [l for (l, _, _) in good]
         ripts = [r for (_, r, _) in good]
         boards = [b for (_, _, b) in good]
@@ -1157,9 +1148,6 @@ class StereoCalibrator(Calibrator):
             retval, rvec, tvec = cv2.solvePnP(o, l, self.l.intrinsics, self.l. distortion)
             print "retval/ rvec/ tvec:", retval, rvec, tvec
 
-
-
-
     def as_message(self):
         """
         Return the camera calibration as a pair of CameraInfo messages, for left
@@ -1169,7 +1157,7 @@ class StereoCalibrator(Calibrator):
         return (self.lrmsg(self.l.distortion, self.l.intrinsics, self.l.R, self.l.P),
                 self.lrmsg(self.r.distortion, self.r.intrinsics, self.r.R, self.r.P))
 
-    def from_message(self, msgs, alpha = 0.0):
+    def from_message(self, msgs, alpha=0.0):
         """ Initialize the camera calibration from a pair of CameraInfo messages.  """
         self.size = (msgs[0].width, msgs[0].height)
 

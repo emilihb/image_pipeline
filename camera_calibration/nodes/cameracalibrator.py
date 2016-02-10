@@ -45,7 +45,8 @@ import functools
 import time
 
 import cv2
-import numpy
+import numpy as np
+import yaml
 
 from camera_calibration.calibrator import MonoCalibrator, StereoCalibrator, ChessboardInfo, Patterns
 from std_msgs.msg import String
@@ -296,8 +297,8 @@ class OpenCVCalibrationNode(CalibrationNode):
         self.display_thread.start()
 
     @classmethod
-    def putText(cls, img, text, org, color = (0,0,0)):
-        cv2.putText(img, text, org, cls.FONT_FACE, cls.FONT_SCALE, color, thickness = cls.FONT_THICKNESS)
+    def putText(cls, img, text, org, color=(0, 0, 0)):
+        cv2.putText(img, text, org, cls.FONT_FACE, cls.FONT_SCALE, color, thickness=cls.FONT_THICKNESS)
 
     @classmethod
     def getTextSize(cls, text):
@@ -329,18 +330,18 @@ class OpenCVCalibrationNode(CalibrationNode):
             color = (224, 224, 224)
         cv2.circle(dst, (size[0] / 2, size[1] / 2), min(size) / 2, color, -1)
         (w, h) = self.getTextSize(label)
-        self.putText(dst, label, ((size[0] - w) / 2, (size[1] + h) / 2), (255,255,255))
+        self.putText(dst, label, ((size[0] - w) / 2, (size[1] + h) / 2), (255, 255, 255))
 
     def buttons(self, display):
         x = self.displaywidth
-        self.button(display[180:280,x:x+100], "CALIBRATE", self.c.goodenough)
-        self.button(display[280:380,x:x+100], "SAVE", self.c.calibrated)
-        self.button(display[380:480,x:x+100], "COMMIT", self.c.calibrated)
+        self.button(display[180:280, x:x+100], "CALIBRATE", self.c.goodenough)
+        self.button(display[280:380, x:x+100], "SAVE", self.c.calibrated)
+        self.button(display[380:480, x:x+100], "COMMIT", self.c.calibrated)
 
     def y(self, i):
         """Set up right-size images"""
         return 30 + 40 * i
-        
+
     def screendump(self, im):
         i = 0
         while os.access("/tmp/dump%d.png" % i, os.R_OK):
@@ -351,24 +352,22 @@ class OpenCVCalibrationNode(CalibrationNode):
         height = drawable.scrib.shape[0]
         width = drawable.scrib.shape[1]
 
-        display = numpy.zeros((max(480, height), width + 100, 3), dtype=numpy.uint8)
-        display[0:height, 0:width,:] = drawable.scrib
-        display[0:height, width:width+100,:].fill(255)
-
+        display = np.zeros((max(480, height), width + 100, 3), dtype=np.uint8)
+        display[0:height, 0:width, :] = drawable.scrib
+        display[0:height, width:width+100, :].fill(255)
 
         self.buttons(display)
         if not self.c.calibrated:
             if drawable.params:
-                 for i, (label, lo, hi, progress) in enumerate(drawable.params):
-                    (w,_) = self.getTextSize(label)
+                for i, (label, lo, hi, progress) in enumerate(drawable.params):
+                    (w, _) = self.getTextSize(label)
                     self.putText(display, label, (width + (100 - w) / 2, self.y(i)))
-                    color = (0,255,0)
+                    color = (0, 255, 0)
                     if progress < 1.0:
                         color = (0, int(progress*255.), 255)
                     cv2.line(display,
-                            (int(width + lo * 100), self.y(i) + 20),
-                            (int(width + hi * 100), self.y(i) + 20),
-                            color, 4)
+                        (int(width+lo*100), self.y(i)+20),
+                        (int(width+hi*100), self.y(i)+20), color, 4)
 
         else:
             self.putText(display, "lin.", (width, self.y(0)))
@@ -391,7 +390,7 @@ class OpenCVCalibrationNode(CalibrationNode):
 
         height = max(lheight, rheight)
         width = lwidth + rwidth
-        display = numpy.zeros((max(480, height), lwidth+rwidth + 100, 3), dtype=numpy.uint8)
+        display = np.zeros((max(480, height), lwidth+rwidth + 100, 3), dtype=np.uint8)
         display[0:lheight, 0:lwidth, :] = drawable.lscrib
         display[0:rheight, lwidth:width, :] = drawable.rscrib
         display[0:height, width:width+100, :].fill(255)
@@ -426,17 +425,80 @@ class OpenCVCalibrationNode(CalibrationNode):
         self.queue_display.append(display)
 
 
+def load_pattern_file(fn):
+    with open(fn, 'r') as f:
+        d = yaml.load(f)
+    return d
+
+
+def setup_blob_detector(data, scale=1.):
+    """ blob detector for circle/acircles patterns"""
+    param = cv2.SimpleBlobDetector_Params()
+
+    if 'filter_by_area' in data:
+        param.filterByArea = data['filter_by_area']
+    if 'max_area' in data:
+        param.maxArea = data['max_area'] / float(scale)
+    if 'min_area' in data:
+        param.minArea = data['min_area'] / float(scale)
+    if 'filter_by_circularity' in data:
+        param.filterByCircularity = data['filter_by_circularity']
+    if 'max_circularity' in data:
+        param.maxCircularity = data['max_circularity']
+    if 'min_circularity' in data:
+        param.minCircularity = data['min_circularity']
+    if 'filter_by_color' in data:
+        param.filterByColor = data['filter_by_color']
+    if 'color' in data:
+        param.color = data['color']
+    if 'filter_by_convexity' in data:
+        param.filterByConvexity = data['filter_by_convexity']
+    if 'max_convexity' in data:
+        param.maxConvexity = data['max_convexity']
+    if 'min_convexity' in data:
+        param.minConvexity = data['min_convexity']
+    if 'filter_by_inertia' in data:
+        param.filterByInertia = data['filter_by_inertia']
+    if 'max_inertia_ratio' in data:
+        param.maxInertiaRatio = data['max_inertia_ratio']
+    if 'min_inertia_ratio' in data:
+        param.minInertiaRatio = data['min_inertia_ratio']
+    if 'max_threshold' in data:
+        param.maxThreshold = data['max_threshold']
+    if 'min_threshold' in data:
+        param.minThreshold = data['min_threshold']
+    if 'threshold_step' in data:
+        param.thresholdStep = data['threshold_step']
+    if 'min_repeatability' in data:
+        param.minRepeatability = data['min_repeatability']
+    if 'min_dist_between_blobs' in data:
+        param.minDistBetweenBlobs = data['min_dist_between_blobs']
+
+    return cv2.SimpleBlobDetector(param)
+
+
 def main():
     from optparse import OptionParser, OptionGroup
     parser = OptionParser("%prog --size SIZE1 --square SQUARE1 [ --size SIZE2 --square SQUARE2 ]",
                           description=None)
+
     parser.add_option("-c", "--camera_name",
-                     type="string", default='narrow_stereo',
-                     help="name of the camera to appear in the calibration file")
+        type="string", default='narrow_stereo',
+        help="name of the camera to appear in the calibration file")
+    parser.add_option(
+        "--image_size",
+        type="string", default="640x480",
+        help="image size as NxM for calibartion (default 640x480)")
+
     group = OptionGroup(parser, "Chessboard Options",
                         "You must specify one or more chessboards as pairs of --size and --square options.")
+    group.add_option("-f", "--file",
+                     type="string", default="",
+                     help="yml file with calibration pattern options")
     group.add_option("-p", "--pattern",
-                     type="string", default="chessboard",
+                     type="choice",
+                     choices=['circles', 'acircles', 'chessboard'],
+                     default="chessboard",
                      help="calibration pattern to detect - 'chessboard', 'circles', 'acircles'")
     group.add_option("-s", "--size",
                      action="append", default=[],
@@ -444,11 +506,6 @@ def main():
     group.add_option("-q", "--square",
                      action="append", default=[],
                      help="chessboard square size in meters")
-    group.add_option("--img-size",         
-                    type="string", default="640x480",
-                    help="minimum image size as NxM for calibartion (default 640x480)")
-    group.add_option("--extrinsics-only", action="store_true", default=False,
-                     help="force stereo extrinsics calibration only. Intrinsics for both cameras must be provided")
     parser.add_option_group(group)
 
     group = OptionGroup(parser, "ROS Communication Options")
@@ -485,27 +542,51 @@ def main():
                      action="store_true", default=False,
                      help="find minimum alpha with no back borders")
 
+    group = OptionGroup(parser, "Stereo Calibration Options")
+    group.add_option("--extrinsics-only", action="store_true", default=False,
+                     help="force stereo extrinsics calibration only. Intrinsics for both cameras must be provided")
+    parser.add_option_group(group)
+
     options, args = parser.parse_args()
 
+    # Check inconsistencies
     if len(options.size) != len(options.square):
         parser.error("Number of size and square inputs must be the same!")
 
-    img_size = tuple([int(c) for c in options.img_size.split('x')])
+    if options.file and (options.size or options.square):
+        parser.error("Options -f and -p -s -q are mullually exclusive")
 
-    if not options.square:
-        options.square.append("0.108")
-        options.size.append("8x6")
+    img_size = tuple([int(c) for c in options.image_size.split('x')])
 
+    # Pattern options
     boards = []
+    detector = None
+    if options.file:
+        p = load_pattern_file(options.file)
+        options.square.append(p['pattern']['square'])
+        options.size.append(p['pattern']['size'])
+        options.pattern = p['pattern']['type']
+        if p['blob_detector']:
+            detector = setup_blob_detector(p['blob_detector'], 3.)  # scale should be computed automatically
+
     for (sz, sq) in zip(options.size, options.square):
         size = tuple([int(c) for c in sz.split('x')])
-        boards.append(ChessboardInfo(size[0], size[1], float(sq)))
+        boards.append(ChessboardInfo(size[0], size[1], float(sq), detector))
 
+    if options.pattern == 'circles':
+        pattern = Patterns.Circles
+    elif options.pattern == 'acircles':
+        pattern = Patterns.ACircles
+    elif options.pattern == 'chessboard':
+        pattern = Patterns.Chessboard
+
+    # ROS options
     if options.approximate == 0.0:
         sync = message_filters.TimeSynchronizer
     else:
         sync = functools.partial(ApproximateTimeSynchronizer, slop=options.approximate)
 
+    # Calibration optimizer options
     num_ks = options.k_coefficients
 
     calib_flags = 0
@@ -529,14 +610,6 @@ def main():
         calib_flags |= cv2.CALIB_FIX_K2
     if (num_ks < 1):
         calib_flags |= cv2.CALIB_FIX_K1
-
-    pattern = Patterns.Chessboard
-    if options.pattern == 'circles':
-        pattern = Patterns.Circles
-    elif options.pattern == 'acircles':
-        pattern = Patterns.ACircles
-    elif options.pattern != 'chessboard':
-        print('Unrecognized pattern %s, defaulting to chessboard' % options.pattern)
 
     if options.disable_calib_cb_fast_check:
         checkerboard_flags = 0
