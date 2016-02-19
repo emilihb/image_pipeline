@@ -189,16 +189,6 @@ class CalibrationNode:
         self.rinfo_sub.unregister()
 
     def handle_monocular(self, msg):
-        # if self.c is None:
-        #     if not self._camera_name:
-
-        #         self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern, name=self._camera_name,
-        #                                 checkerboard_flags=self._checkerboard_flags,
-        #                                 min_img_size=self._min_img_size)
-        #     else:
-        #         self.c = MonoCalibrator(self._boards, self._calib_flags, self._pattern,
-        #                                 checkerboard_flags=self.checkerboard_flags,
-        #                                 min_img_size=self._min_img_size)
         if self.c is None:
             self.c = MonoCalibrator(
                 self._boards,
@@ -217,35 +207,16 @@ class CalibrationNode:
 
     def handle_stereo(self, msg):
         if self.c is None:
-            if self._camera_name:
-
-                self.c = StereoCalibrator(
-                    self._boards,
-                    self._calib_flags,
-                    self._pattern,
-                    name=self._camera_name,
-                    checkerboard_flags=self._checkerboard_flags,
-                    min_img_size=self._min_img_size,
-                    camera_info=(self._left_camera_info, self._right_camera_info))
-            else:
-                self.c = StereoCalibrator(
-                    self._boards,
-                    self._calib_flags,
-                    self._pattern,
-                    checkerboard_flags=self._checkerboard_flags,
-                    min_img_size=self._min_img_size,
-                    camera_info=(self._left_camera_info, self._right_camera_info))
-        # if self.c is None:
-        #     self.c = StereoCalibrator(
-        #                 self._boards,
-        #                 self._calib_flags,
-        #                 self._pattern,
-        #                 name=self._camera_name,
-        #                 checkerboard_flags=self._checkerboard_flags,
-        #                 min_img_size=self._min_img_size,
-        #                 camera_info=(self._left_camera_info, self._right_camera_info),
-        #                 center_principal_point=self._center_principal_point,
-        #                 auto_alpha=self._auto_alpha)
+            self.c = StereoCalibrator(
+                        self._boards,
+                        self._calib_flags,
+                        self._pattern,
+                        name=self._camera_name,
+                        checkerboard_flags=self._checkerboard_flags,
+                        min_img_size=self._min_img_size,
+                        camera_info=(self._left_camera_info, self._right_camera_info),
+                        center_principal_point=self._center_principal_point,
+                        auto_alpha=self._auto_alpha)
         drawable = self.c.handle_msg(msg)
         self.displaywidth = drawable.lscrib.shape[1] + drawable.rscrib.shape[1]
         self.redraw_stereo(drawable)
@@ -388,8 +359,6 @@ class OpenCVCalibrationNode(CalibrationNode):
 
         rheight = drawable.rscrib.shape[0]
         rwidth = drawable.rscrib.shape[1]
-
-        # print("REDRAW w/h:", drawable.lscrib.shape, drawable.rscrib.shape)
 
         height = max(lheight, rheight)
         width = lwidth + rwidth

@@ -1,7 +1,7 @@
 pattern:
     type: acircles  # options: chessboard, circles, acircles
     size: 11x4  # columns x rows
-    square: 0.02  # square size in meters
+    square: 0.04  # square size in meters
 
 blob_detector:  # only for circles/acircles patterns
     filter_by_area: True

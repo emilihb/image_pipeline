@@ -70,20 +70,24 @@ class ChessboardInfo(object):
         self.dim = dim
         self._detector = detector
 
+
 # Make all private!!!!!
 def lmin(seq1, seq2):
     """ Pairwise minimum of two sequences """
     return [min(a, b) for (a, b) in zip(seq1, seq2)]
 
+
 def lmax(seq1, seq2):
     """ Pairwise maximum of two sequences """
     return [max(a, b) for (a, b) in zip(seq1, seq2)]
+
 
 def _pdist(p1, p2):
     """
     Distance bwt two points. p1 = (x, y), p2 = (x, y)
     """
     return math.sqrt(math.pow(p1[0] - p2[0], 2) + math.pow(p1[1] - p2[1], 2))
+
 
 def _get_outside_corners(corners, board):
     """
@@ -96,16 +100,17 @@ def _get_outside_corners(corners, board):
         raise Exception("Invalid number of corners! %d corners. X: %d, Y: %d" % (corners.shape[1] * corners.shape[0],
                                                                                  xdim, ydim))
 
-    up_left    = corners[0,0]
-    up_right   = corners[xdim - 1,0]
-    down_right = corners[-1,0]
-    down_left  = corners[-xdim,0]
+    up_left = corners[0, 0]
+    up_right = corners[xdim - 1, 0]
+    down_right = corners[-1, 0]
+    down_left = corners[-xdim, 0]
 
     return (up_left, up_right, down_right, down_left)
 
+
 def _get_skew(corners, board):
     """
-    Get skew for given checkerboard detection. 
+    Get skew for given checkerboard detection.
     Scaled to [0,1], which 0 = no skew, 1 = high skew
     Skew is proportional to the divergence of three outside corners from 90 degrees.
     """
@@ -119,10 +124,11 @@ def _get_skew(corners, board):
         """
         ab = a - b
         cb = c - b
-        return math.acos(np.dot(ab,cb) / (np.linalg.norm(ab) * np.linalg.norm(cb)))
+        return math.acos(np.dot(ab, cb) / (np.linalg.norm(ab) * np.linalg.norm(cb)))
 
     skew = min(1.0, 2. * abs((math.pi / 2.) - angle(up_left, up_right, down_right)))
     return skew
+
 
 def _get_area(corners, board):
     """
@@ -138,7 +144,8 @@ def _get_area(corners, board):
     q = a + b
     return abs(p[0]*q[1] - p[1]*q[0]) / 2.
 
-def _get_corners(img, board, refine = True, checkerboard_flags=0):
+
+def _get_corners(img, board, refine=True, checkerboard_flags=0):
     """
     Get corners for a particular chessboard for an image
     """
@@ -148,8 +155,11 @@ def _get_corners(img, board, refine = True, checkerboard_flags=0):
         mono = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     else:
         mono = img
-    (ok, corners) = cv2.findChessboardCorners(mono, (board.n_cols, board.n_rows), flags = cv2.CALIB_CB_ADAPTIVE_THRESH |
-                                              cv2.CALIB_CB_NORMALIZE_IMAGE | checkerboard_flags)
+    (ok, corners) = cv2.findChessboardCorners(
+        mono,
+        (board.n_cols, board.n_rows),
+        flags=cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE | checkerboard_flags)
+
     if not ok:
         return (ok, corners)
 
@@ -173,10 +183,15 @@ def _get_corners(img, board, refine = True, checkerboard_flags=0):
                 index = row*board.n_rows + col
                 min_distance = min(min_distance, _pdist(corners[index, 0], corners[index + board.n_cols, 0]))
         radius = int(math.ceil(min_distance * 0.5))
-        cv2.cornerSubPix(mono, corners, (radius,radius), (-1,-1),
-                                      ( cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1 ))
+        cv2.cornerSubPix(
+            mono,
+            corners,
+            (radius, radius),
+            (-1, -1),
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
 
     return (ok, corners)
+
 
 def _get_circles(img, board, pattern):
     """
@@ -288,23 +303,23 @@ class Calibrator(object):
         Return list of parameters [X, Y, size, skew] describing the checkerboard view.
         """
         (width, height) = size
-        Xs = corners[:,:,0]
-        Ys = corners[:,:,1]
+        Xs = corners[:, :, 0]
+        Ys = corners[:, :, 1]
         area = _get_area(corners, board)
         border = math.sqrt(area)
         # For X and Y, we "shrink" the image all around by approx. half the board size.
         # Otherwise large boards are penalized because you can't get much X/Y variation.
-        p_x = min(1.0, max(0.0, (np.mean(Xs) - border / 2) / (width  - border)))
+        p_x = min(1.0, max(0.0, (np.mean(Xs) - border / 2) / (width - border)))
         p_y = min(1.0, max(0.0, (np.mean(Ys) - border / 2) / (height - border)))
         p_size = math.sqrt(area / (width * height))
 
-        # skew = _get_skew(corners, board)
-        # params = [p_x, p_y, p_size, skew]
-        if self.camera_info is None:
-            skew = _get_skew(corners, board)
-            params = [p_x, p_y, p_size, skew]
-        else:
-            params = [p_x, p_y, p_size]
+        skew = _get_skew(corners, board)
+        params = [p_x, p_y, p_size, skew]
+        # if self.camera_info is None:
+        #     skew = _get_skew(corners, board)
+        #     params = [p_x, p_y, p_size, skew]
+        # else:
+        #     params = [p_x, p_y, p_size]
         return params
 
     def is_good_sample(self, params):
@@ -315,11 +330,11 @@ class Calibrator(object):
             return True
 
         def param_distance(p1, p2):
-            return sum([abs(a-b) for (a,b) in zip(p1, p2)])
+            return sum([abs(a-b) for (a, b) in zip(p1, p2)])
 
         db_params = [sample[0] for sample in self.db]
         d = min([param_distance(params, p) for p in db_params])
-        #print "d = %.3f" % d #DEBUG
+        # print "d = %.3f" % d #DEBUG
         # TODO What's a good threshold here? Should it be configurable?
         return d > 0.2
 
@@ -347,7 +362,7 @@ class Calibrator(object):
 
         return list(zip(self._param_names, min_params, max_params, progress))
 
-    def mk_object_points(self, boards, use_board_size = False):
+    def mk_object_points(self, boards, use_board_size=False):
         opts = []
         for i, b in enumerate(boards):
             num_pts = b.n_cols * b.n_rows
@@ -364,7 +379,7 @@ class Calibrator(object):
             opts.append(opts_loc)
         return opts
 
-    def get_corners(self, img, refine = True):
+    def get_corners(self, img, refine=True):
         """
         Use cvFindChessboardCorners to find corners of chessboard in image.
 
@@ -373,7 +388,6 @@ class Calibrator(object):
 
         Returns (ok, corners, board)
         """
-
         for b in self._boards:
             if self.pattern == Patterns.Chessboard:
                 (ok, corners) = _get_corners(img, b, refine, self.checkerboard_flags)
@@ -381,6 +395,7 @@ class Calibrator(object):
                 (ok, corners) = _get_circles(img, b, self.pattern)
             if ok:
                 return (ok, corners, b)
+
         return (False, None, None)
 
     def downsample_and_detect(self, img):
@@ -397,8 +412,8 @@ class Calibrator(object):
         # Scale the input image down to ~VGA size
         height = img.shape[0]
         width = img.shape[1]
-        scale = math.sqrt( (width*height) / float(self.min_img_size[0]* self.min_img_size[1]) )
-        if scale  != 1.0:
+        scale = math.sqrt((width*height) / float(self.min_img_size[0] * self.min_img_size[1]))
+        if scale != 1.0:
             scrib = cv2.resize(img, (int(width / scale), int(height / scale)))
         else:
             scrib = img
@@ -408,7 +423,7 @@ class Calibrator(object):
 
         if self.pattern == Patterns.Chessboard:
             # Detect checkerboard
-            (ok, downsampled_corners, board) = self.get_corners(scrib, refine = True)
+            (ok, downsampled_corners, board) = self.get_corners(scrib, refine=True)
 
             # Scale corners back to full size image
             corners = None
@@ -424,8 +439,12 @@ class Calibrator(object):
                         mono = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     else:
                         mono = img
-                    cv2.cornerSubPix(mono, corners_unrefined, (radius,radius), (-1,-1),
-                                                  ( cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1 ))
+                    cv2.cornerSubPix(
+                        mono,
+                        corners_unrefined,
+                        (radius, radius),
+                        (-1, -1),
+                        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
                     corners = corners_unrefined
                 else:
                     corners = downsampled_corners
@@ -490,37 +509,35 @@ class Calibrator(object):
     # TODO Get rid of OST format, show output as YAML instead
     def lrost(self, name, d, k, r, p, sz):
         calmessage = (
-            "# oST version 5.0 parameters\n"
-            + "\n"
-            + "\n"
-            + "[image]\n"
-            + "\n"
-            + "width\n"
-            + str(sz[0]) + "\n"
-            + "\n"
-            + "height\n"
-            + str(sz[1]) + "\n"
-            + "\n"
-            + "[%s]" % name + "\n"
-            + "\n"
-            + "camera matrix\n"
-            + " ".join(["%8f" % k[0, i] for i in range(3)]) + "\n"
-            + " ".join(["%8f" % k[1, i] for i in range(3)]) + "\n"
-            + " ".join(["%8f" % k[2, i] for i in range(3)]) + "\n"
-            + "\n"
-            + "distortion\n"
-            + " ".join(["%8f" % d[i, 0] for i in range(d.shape[0])]) + "\n"
-            + "\n"
-            + "rectification\n"
-            + " ".join(["%8f" % r[0, i] for i in range(3)]) + "\n"
-            + " ".join(["%8f" % r[1, i] for i in range(3)]) + "\n"
-            + " ".join(["%8f" % r[2, i] for i in range(3)]) + "\n"
-            + "\n"
-            + "projection\n"
-            + " ".join(["%8f" % p[0, i] for i in range(4)]) + "\n"
-            + " ".join(["%8f" % p[1, i] for i in range(4)]) + "\n"
-            + " ".join(["%8f" % p[2, i] for i in range(4)]) + "\n"
-            + "\n")
+            "# oST version 5.0 parameters\n" +
+            "\n" +
+            "\n" +
+            "[image]\n" +
+            "\n" +
+            "width\n" + str(sz[0]) + "\n" +
+            "\n" +
+            "height\n" + str(sz[1]) + "\n" +
+            "\n" +
+            "[%s]" % name + "\n" +
+            "\n" +
+            "camera matrix\n" +
+            " ".join(["%8f" % k[0, i] for i in range(3)]) + "\n" +
+            " ".join(["%8f" % k[1, i] for i in range(3)]) + "\n" +
+            " ".join(["%8f" % k[2, i] for i in range(3)]) + "\n" +
+            "\n" +
+            "distortion\n" +
+            " ".join(["%8f" % d[i, 0] for i in range(d.shape[0])]) + "\n" +
+            "\n" +
+            "rectification\n" +
+            " ".join(["%8f" % r[0, i] for i in range(3)]) + "\n" +
+            " ".join(["%8f" % r[1, i] for i in range(3)]) + "\n" +
+            " ".join(["%8f" % r[2, i] for i in range(3)]) + "\n" +
+            "\n" +
+            "projection\n" +
+            " ".join(["%8f" % p[0, i] for i in range(4)]) + "\n" +
+            " ".join(["%8f" % p[1, i] for i in range(4)]) + "\n" +
+            " ".join(["%8f" % p[2, i] for i in range(4)]) + "\n" +
+            "\n")
         assert len(calmessage) < 525, "Calibration info must be less than 525 bytes"
         return calmessage
 
@@ -603,6 +620,7 @@ class MonoCalibrator(Calibrator):
         super(MonoCalibrator, self).__init__(*args, **kwargs)
         self.image_ok = []
         self.idx = 0  # for image_ok
+        self.alpha = None
 
     def cal(self, images):
         """
@@ -860,8 +878,8 @@ class MonoCalibrator(Calibrator):
 
                 # Draw rectified corners
                 scrib_src = undistorted.copy()
-                scrib_src[:,:,0] /= x_scale
-                scrib_src[:,:,1] /= y_scale
+                scrib_src[:, :, 0] /= x_scale
+                scrib_src[:, :, 1] /= y_scale
                 cv2.drawChessboardCorners(scrib, (board.n_cols, board.n_rows), scrib_src, True)
 
         else:
@@ -885,16 +903,16 @@ class MonoCalibrator(Calibrator):
         rv.linear_error = linear_error
         return rv
 
-    def do_calibration(self, dump = False):
+    def do_calibration(self, dump=False):
         if not self.good_corners:
-            print("**** Collecting corners for all images! ****") #DEBUG
+            print("**** Collecting corners for all images! ****")  # DEBUG
             images = [i for (p, i) in self.db]
             self.good_corners = self.collect_corners(images)
         # Dump should only occur if user wants it
         if dump:
             pickle.dump((self.is_mono, self.size, self.good_corners),
                         open("/tmp/camera_calibration_%08x.pickle" % random.getrandbits(32), "w"))
-        self.size = (self.db[0][1].shape[1], self.db[0][1].shape[0]) # TODO Needs to be set externally
+        self.size = (self.db[0][1].shape[1], self.db[0][1].shape[0])  # TODO Needs to be set externally
         self.cal_fromcorners(self.good_corners)
         self.calibrated = True
         # DEBUG
@@ -912,7 +930,7 @@ class MonoCalibrator(Calibrator):
             ti.mtime = int(time.time())
             tf.addfile(tarinfo=ti, fileobj=s)
 
-        ims = [("left-%04d.png" % i, im) for i,(_, im) in enumerate(self.db)]
+        ims = [("left-%04d.png" % i, im) for i, (_, im) in enumerate(self.db)]
         for (name, im) in ims:
             taradd(name, cv2.imencode(".png", im)[1].tostring())
 
@@ -923,8 +941,9 @@ class MonoCalibrator(Calibrator):
     def do_tarfile_calibration(self, filename):
         archive = tarfile.open(filename, 'r')
 
-        limages = [ image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('left') and (f.endswith('.pgm') or f.endswith('png'))) ]
+        limages = [image_from_archive(archive, f) for f in archive.getnames() if (f.startswith('left') and (f.endswith('.pgm') or f.endswith('png')))]
         self.cal(limages)
+
 
 # TODO Replicate MonoCalibrator improvements in stereo
 class StereoCalibrator(Calibrator):
@@ -1056,20 +1075,6 @@ class StereoCalibrator(Calibrator):
             criteria=(cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 1, 1e-5),
             flags=flags)
 
-        print "Stereo Extrinsics:"
-        print "Rotation Matrix:"
-        print self.R
-        self.euler = np.array([
-            np.arctan2(self.R[2, 1], self.R[2, 2]),
-            np.arctan2(-self.R[2, 0], np.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
-            np.arctan2(self.R[1, 0], self.R[0, 0])])
-        print "Euler\n\trad: %s\n\tdeg: %s" % (np.array_str(self.euler), np.array_str(self.euler*180./np.pi))
-        print "T: %s" % (np.array_str(np.reshape(self.T, (-1,))))
-        print "Essential Matrix:"
-        print self.E
-        print "Fundamental Matrix:"
-        print self.F
-
         if self.l.auto_alpha:
             print "Auto alpha not implemented yet for stereo"
         self.set_alpha(0.0)
@@ -1171,12 +1176,22 @@ class StereoCalibrator(Calibrator):
             self.set_alpha(0.0)
 
     def report(self):
-        print("\nLeft:")
+        print "\nStereo Calibration"
+        print "------------------"
+        print "Left:"
         self.lrreport(self.l.distortion, self.l.intrinsics, self.l.R, self.l.P, self.l.alpha)
-        print("\nRight:")
+        print "\nRight:"
         self.lrreport(self.r.distortion, self.r.intrinsics, self.r.R, self.r.P, self.r.alpha)
-        print("self.T ", np.ravel(self.T).tolist())
-        print("self.R ", np.ravel(self.R).tolist())
+        print "self.T ", np.ravel(self.T).tolist()
+        print "self.R ", np.ravel(self.R).tolist()
+
+        self.euler = np.array([
+            np.arctan2(self.R[2, 1], self.R[2, 2]),
+            np.arctan2(-self.R[2, 0], np.sqrt(self.R[2, 1]**2 + self.R[2, 2]**2)),
+            np.arctan2(self.R[1, 0], self.R[0, 0])])
+        print "Euler"
+        print "\trad:", np.array_str(self.euler)
+        print "\tdeg:", np.array_str(self.euler*180./np.pi)
 
     def ost(self):
         return (
@@ -1248,7 +1263,7 @@ class StereoCalibrator(Calibrator):
         """
         Compute the epipolar error from two sets of matching undistorted points
         """
-        d = lcorners[:,:,1] - rcorners[:,:,1]
+        d = lcorners[:, :, 1] - rcorners[:, :, 1]
         return np.sqrt(np.square(d).sum() / d.size)
 
     def chessboard_size_from_images(self, limage, rimage):
@@ -1262,7 +1277,7 @@ class StereoCalibrator(Calibrator):
 
         return self.chessboard_size(lundistorted, rundistorted, board)
 
-    def chessboard_size(self, lcorners, rcorners, board, msg = None):
+    def chessboard_size(self, lcorners, rcorners, board, msg=None):
         """
         Compute the square edge length from two sets of matching undistorted points
         given the current calibration.
@@ -1270,11 +1285,11 @@ class StereoCalibrator(Calibrator):
         """
         # Project the points to 3d
         cam = image_geometry.StereoCameraModel()
-        if msg == None:
+        if msg is None:
             msg = self.as_message()
         cam.fromCameraInfo(*msg)
-        disparities = lcorners[:,:,0] - rcorners[:,:,0]
-        pt3d = [cam.projectPixelTo3d((lcorners[i,0,0], lcorners[i,0,1]), disparities[i,0]) for i in range(lcorners.shape[0]) ]
+        disparities = lcorners[:, :, 0] - rcorners[:, :, 0]
+        pt3d = [cam.projectPixelTo3d((lcorners[i, 0, 0], lcorners[i, 0, 1]), disparities[i, 0]) for i in range(lcorners.shape[0])]
         def l2(p0, p1):
             return math.sqrt(sum([(c0 - c1) ** 2 for (c0, c1) in zip(p0, p1)]))
 
@@ -1370,7 +1385,6 @@ class StereoCalibrator(Calibrator):
         return rv
 
     def do_calibration(self, dump=False):
-        print "DO CALIBRATION"
         # TODO MonoCalibrator collects corners if needed here
         # Dump should only occur if user wants it
         if dump:
@@ -1414,8 +1428,7 @@ class StereoCalibrator(Calibrator):
 
         if not len(limages) == len(rimages):
             raise CalibrationException("Left, right images don't match. %d left images, %d right" % (len(limages), len(rimages)))
-        
-        ##\todo Check that the filenames match and stuff
+
+        # \todo Check that the filenames match and stuff
 
         self.cal(limages, rimages)
-
