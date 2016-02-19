@@ -94,6 +94,7 @@ class ConsumerThread(threading.Thread):
             while len(self.queue) == 0:
                 time.sleep(0.1)
             self.function(self.queue[0])
+            self.queue.pop()
 
 
 class CalibrationNode:
@@ -388,6 +389,8 @@ class OpenCVCalibrationNode(CalibrationNode):
         rheight = drawable.rscrib.shape[0]
         rwidth = drawable.rscrib.shape[1]
 
+        # print("REDRAW w/h:", drawable.lscrib.shape, drawable.rscrib.shape)
+
         height = max(lheight, rheight)
         width = lwidth + rwidth
         display = np.zeros((max(480, height), lwidth+rwidth + 100, 3), dtype=np.uint8)
@@ -566,7 +569,7 @@ def main():
         options.square.append(p['pattern']['square'])
         options.size.append(p['pattern']['size'])
         options.pattern = p['pattern']['type']
-        if p['blob_detector']:
+        if 'blob_detector' in p:
             detector = setup_blob_detector(p['blob_detector'], 3.)  # scale should be computed automatically
 
     for (sz, sq) in zip(options.size, options.square):
